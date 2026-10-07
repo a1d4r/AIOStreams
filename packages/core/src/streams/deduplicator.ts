@@ -601,6 +601,47 @@ class StreamDeduplicator {
         if (max > 0) winner.folderSize = max;
       }
     }
+    if (fields.includes('release')) {
+      this.mergeRelease(winner, others);
+    }
+  }
+
+  /**
+   * Fill what the winner's name doesn't say from its duplicates, e.g. a bare
+   * `00030.m2ts` of a disc torrent: the release name goes to `folderName` and
+   * the empty release fields of `parsedFile` are taken from the first
+   * duplicate that has them. Nothing the winner already has is overwritten.
+   */
+  private mergeRelease(winner: ParsedStream, others: ParsedStream[]): void {
+    if (!winner.folderName) {
+      const name = others
+        .map((s) => s.folderName ?? s.torrent?.title ?? s.filename)
+        .find((n) => n && n !== winner.filename);
+      if (name) winner.folderName = name;
+    }
+
+    if (!winner.parsedFile) return;
+    const parsedFile = winner.parsedFile;
+    const sources = others.flatMap((s) => (s.parsedFile ? [s.parsedFile] : []));
+    for (const key of [
+      'releaseGroup',
+      'resolution',
+      'quality',
+      'encode',
+      'network',
+    ] as const) {
+      parsedFile[key] ||= sources.find((p) => p[key])?.[key];
+    }
+    for (const key of [
+      'visualTags',
+      'audioTags',
+      'audioChannels',
+      'editions',
+    ] as const) {
+      if (parsedFile[key]?.length) continue;
+      const value = sources.find((p) => p[key]?.length)?.[key];
+      if (value) parsedFile[key] = [...value];
+    }
   }
 
   /**

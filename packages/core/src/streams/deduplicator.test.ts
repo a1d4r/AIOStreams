@@ -137,3 +137,72 @@ describe('mergeLanguagesAndSubtitles', () => {
     assert.equal(winner.parsedFile?.mediaInfoQuality, 'addon');
   });
 });
+
+describe('merge release', () => {
+  function makeRelease(
+    filename: string,
+    parsed: Partial<NonNullable<ParsedStream['parsedFile']>> = {},
+    folderName?: string
+  ): ParsedStream {
+    const stream = makeStream(undefined, [], [], filename);
+    stream.type = 'debrid';
+    stream.service = { id: 'realdebrid', cached: true };
+    stream.folderName = folderName;
+    stream.torrent = { infoHash: 'a'.repeat(40) };
+    Object.assign(stream.parsedFile!, parsed);
+    return stream;
+  }
+
+  async function dedupByHash(streams: ParsedStream[]) {
+    const deduplicator = new StreamDeduplicator({
+      deduplicator: {
+        enabled: true,
+        keys: ['infoHash'],
+        cached: 'single_result',
+        merge: { enabled: true, fields: ['release'] },
+      },
+      presets: [],
+      services: [],
+    } as unknown as UserData);
+    return deduplicator.deduplicate(streams);
+  }
+
+  it('names a bare disc file after its torrent', async () => {
+    const disc = makeRelease('00030.m2ts');
+    const title =
+      'The Dark Knight Rises [2012 UHD Blu-ray disc 2160p] [IMAX Edition]';
+    const torrent = makeRelease(title, {
+      resolution: '2160p',
+      quality: 'BluRay',
+      visualTags: ['HDR10'],
+    });
+    const results = await dedupByHash([disc, torrent]);
+    assert.equal(results.length, 1);
+    const [winner] = results;
+    assert.equal(winner.filename, '00030.m2ts');
+    assert.equal(winner.folderName, title);
+    assert.equal(winner.parsedFile?.resolution, '2160p');
+    assert.equal(winner.parsedFile?.quality, 'BluRay');
+    assert.deepEqual(winner.parsedFile?.visualTags, ['HDR10']);
+  });
+
+  it('keeps what the winner already has', async () => {
+    const winner = makeRelease(
+      'Movie.2160p.UHD.BDRemux-',
+      { resolution: '2160p', visualTags: ['DV'] },
+      'Movie.Folder'
+    );
+    const other = makeRelease('Movie.1080p.BluRay.mkv', {
+      resolution: '1080p',
+      quality: 'BluRay',
+      visualTags: ['HDR10'],
+      releaseGroup: 'GRP',
+    });
+    const [result] = await dedupByHash([winner, other]);
+    assert.equal(result.folderName, 'Movie.Folder');
+    assert.equal(result.parsedFile?.resolution, '2160p');
+    assert.deepEqual(result.parsedFile?.visualTags, ['DV']);
+    assert.equal(result.parsedFile?.quality, 'BluRay');
+    assert.equal(result.parsedFile?.releaseGroup, 'GRP');
+  });
+});
