@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@viren070/parse-torrent-title': link:../parse-torrent-title
+  '@viren070/parse-torrent-title': file:vendor/viren070-parse-torrent-title-0.9.1.tgz
 
 patchedDependencies:
   stremthru: 5d59636029f2455cfc103c8b8206ce24ff67c7f7f77e6fb8ea3f65dca52105dd
@@ -46,8 +46,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
       '@viren070/parse-torrent-title':
-        specifier: link:../../../parse-torrent-title
-        version: link:../../../parse-torrent-title
+        specifier: file:../../vendor/viren070-parse-torrent-title-0.9.1.tgz
+        version: file:vendor/viren070-parse-torrent-title-0.9.1.tgz
       bcrypt:
         specifier: ^6.0.0
         version: 6.0.0
@@ -3752,6 +3752,10 @@ packages:
   '@viren070/fsmux@0.3.0':
     resolution: {integrity: sha512-SlyO69NTIhEstVSBeXP2IqlWJ+llmHJidEOANckqA4ZRAiNRrRCTURPDRGccP+47fSUMURaB03GbE5OitoYYRQ==}
     engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
+
+  '@viren070/parse-torrent-title@file:vendor/viren070-parse-torrent-title-0.9.1.tgz':
+    resolution: {integrity: sha512-KUa3voVsLUNBUwpGAPbgTISSfJwVIhExCnwokFOnSJZCNeY79qFlZti6AbSB6LgWVlRZgxoIjDtkm94PZrOrnw==, tarball: file:vendor/viren070-parse-torrent-title-0.9.1.tgz}
+    version: 0.9.1
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -10881,6 +10885,8 @@ snapshots:
       '@viren070/fsmux': 0.3.0
 
   '@viren070/fsmux@0.3.0': {}
+
+  '@viren070/parse-torrent-title@file:vendor/viren070-parse-torrent-title-0.9.1.tgz': {}
 
   '@vitest/expect@2.1.9':
     dependencies:

@@ -19,4 +19,4 @@ patchedDependencies:
   yencode@1.2.4: patches/yencode@1.2.4.patch
 
 overrides:
-  "@viren070/parse-torrent-title": "link:../parse-torrent-title"
+  "@viren070/parse-torrent-title": "file:vendor/viren070-parse-torrent-title-0.9.1.tgz"
