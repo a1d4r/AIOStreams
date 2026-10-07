@@ -609,8 +609,9 @@ class StreamDeduplicator {
   /**
    * Fill what the winner's name doesn't say from its duplicates, e.g. a bare
    * `00030.m2ts` of a disc torrent: the release name goes to `folderName` and
-   * the empty release fields of `parsedFile` are taken from the first
-   * duplicate that has them. Nothing the winner already has is overwritten.
+   * the empty indexer and release fields of `parsedFile` are taken from the
+   * first duplicate that has them. Nothing the winner already has is
+   * overwritten.
    */
   private mergeRelease(winner: ParsedStream, others: ParsedStream[]): void {
     if (!winner.folderName) {
@@ -619,6 +620,7 @@ class StreamDeduplicator {
         .find((n) => n && n !== winner.filename);
       if (name) winner.folderName = name;
     }
+    winner.indexer ||= others.find((s) => s.indexer)?.indexer;
 
     if (!winner.parsedFile) return;
     const parsedFile = winner.parsedFile;
