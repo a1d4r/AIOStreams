@@ -41,6 +41,17 @@ class DMMCastStreamParser extends StreamParser {
     return undefined;
   }
 
+  // The play URL hides the torrent; DMM names it in `bingeGroup: dmm:{hash}`.
+  protected override getInfoHash(
+    stream: Stream,
+    currentParsedStream: ParsedStream
+  ): string | undefined {
+    return (
+      stream.behaviorHints?.bingeGroup?.match(/^dmm:([a-fA-F0-9]{40})$/)?.[1] ??
+      super.getInfoHash(stream, currentParsedStream)
+    );
+  }
+
   protected override getInLibrary(
     stream: Stream,
     currentParsedStream: ParsedStream

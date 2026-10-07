@@ -281,6 +281,7 @@ export const DEDUPLICATOR_MERGE_FIELDS = [
   'seadex',
   'sizes',
   'idMatched',
+  'release',
 ] as const;
 
 export const GDRIVE_FORMATTER = 'gdrive';
