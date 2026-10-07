@@ -41,6 +41,26 @@ class DMMCastStreamParser extends StreamParser {
     return undefined;
   }
 
+  // DMM splits a filename over 60 chars in half with `-\n`; join it back.
+  protected override getFilename(
+    stream: Stream,
+    currentParsedStream: ParsedStream
+  ): string | undefined {
+    const [first, second] = (stream.description || stream.title || '').split(
+      '\n'
+    );
+    const head = first.slice(0, -1);
+    if (
+      first.endsWith('-') &&
+      second &&
+      head.length + second.length > 60 &&
+      head.length === Math.floor((head.length + second.length) / 2)
+    ) {
+      return head + second;
+    }
+    return super.getFilename(stream, currentParsedStream);
+  }
+
   // The play URL hides the torrent; DMM names it in `bingeGroup: dmm:{hash}`.
   protected override getInfoHash(
     stream: Stream,
