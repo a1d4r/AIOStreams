@@ -205,4 +205,17 @@ describe('merge release', () => {
     assert.equal(result.parsedFile?.quality, 'BluRay');
     assert.equal(result.parsedFile?.releaseGroup, 'GRP');
   });
+
+  it('takes the indexer from a duplicate when the winner has none', async () => {
+    const winner = makeRelease('Movie.2160p.UHD.BDRemux.mkv');
+    const other = makeRelease('Movie.2160p.UHD.BDRemux.mkv');
+    other.indexer = 'rutracker, kinozal';
+    const [result] = await dedupByHash([winner, other]);
+    assert.equal(result.indexer, 'rutracker, kinozal');
+
+    const own = makeRelease('Movie.2160p.UHD.BDRemux.mkv');
+    own.indexer = 'rutor';
+    const [kept] = await dedupByHash([own, other]);
+    assert.equal(kept.indexer, 'rutor');
+  });
 });
