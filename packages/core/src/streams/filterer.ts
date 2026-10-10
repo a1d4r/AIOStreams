@@ -511,7 +511,10 @@ class StreamFilterer {
     // fill in bitrate from metadata runtime and size if missing and enabled
     if (this.userData.bitrate?.useMetadataRuntime !== false) {
       streams.forEach((stream) => {
+        // A season pack's size is the whole pack, unless a separate
+        // folderSize says the size is one file of it.
         const isFolderSize =
+          !stream.folderSize &&
           stream.parsedFile?.seasons?.length &&
           stream.parsedFile.seasons.length > 0 &&
           (!stream.parsedFile.episodes ||
