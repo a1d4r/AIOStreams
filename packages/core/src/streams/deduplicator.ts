@@ -10,7 +10,10 @@ import {
   constants,
   hasTrackLists,
 } from '../utils/index.js';
-import StreamUtils, { shouldPassthroughStage } from './utils.js';
+import StreamUtils, {
+  shouldPassthroughStage,
+  torrentFileKeys,
+} from './utils.js';
 import { shouldProxyStream } from './proxifier.js';
 import { isExternalDebridFailover } from '../main/play-chain.js';
 import { PLAYBACK_PATH_PREFIX } from '../debrid/utils.js';
@@ -137,23 +140,11 @@ class StreamDeduplicator {
       }
     }
 
-    // Addons report "no file selected" as undefined, null or -1. Collect the
-    // real fileIdx values seen for each infoHash so such streams can be keyed
-    // to the file when it is unambiguous.
-    const knownFileIdx = (stream: ParsedStream): number | undefined => {
-      const fileIdx = stream.torrent?.fileIdx;
-      return typeof fileIdx === 'number' && fileIdx >= 0 ? fileIdx : undefined;
-    };
-    const knownFileIdxsByHash = new Map<string, Set<number>>();
-    for (const stream of streams) {
-      const infoHash = stream.torrent?.infoHash?.toLowerCase();
-      const fileIdx = knownFileIdx(stream);
-      if (!infoHash || fileIdx === undefined) continue;
-      if (!knownFileIdxsByHash.has(infoHash)) {
-        knownFileIdxsByHash.set(infoHash, new Set());
-      }
-      knownFileIdxsByHash.get(infoHash)!.add(fileIdx);
-    }
+    // Torrent copies are keyed by the file they play, not just the infoHash,
+    // so different files of one torrent stay apart.
+    const torrentKeys = deduplicationKeys.includes('infoHash')
+      ? torrentFileKeys(streams)
+      : undefined;
 
     // Process ALL streams (including excluded ones) for deduplication grouping
     for (const stream of streams) {
@@ -178,28 +169,8 @@ class StreamDeduplicator {
       const isUsenet =
         stream.type === 'usenet' || stream.type === 'stremio-usenet';
 
-      // Some addons provide fileIdx (to distinguish multiple files within a
-      // single torrent), while others don't. A stream without one takes the
-      // torrent's only known fileIdx; if the torrent has several, it can't
-      // tell which file it is and only groups with other streams lacking one.
-      // Addons differ in infoHash case, so it is compared lower-cased.
-      if (
-        deduplicationKeys.includes('infoHash') &&
-        stream.torrent?.infoHash &&
-        !isUsenet
-      ) {
-        const infoHash = stream.torrent.infoHash.toLowerCase();
-        let fileIdx = knownFileIdx(stream);
-        const hashFileIdxs = knownFileIdxsByHash.get(infoHash);
-        if (fileIdx === undefined && hashFileIdxs?.size === 1) {
-          [fileIdx] = hashFileIdxs;
-        }
-        currentStreamKeyStrings.push(
-          fileIdx === undefined
-            ? `infoHash:${infoHash}`
-            : `infoHash:${infoHash}:${fileIdx}`
-        );
-      }
+      const torrentKey = torrentKeys?.get(stream);
+      if (torrentKey) currentStreamKeyStrings.push(`infoHash:${torrentKey}`);
       if (deduplicationKeys.includes('infoHash') && isUsenet && stream.nzbUrl) {
         currentStreamKeyStrings.push(`infoHash:${stream.nzbUrl}`);
       }
