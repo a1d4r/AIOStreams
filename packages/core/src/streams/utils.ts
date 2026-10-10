@@ -85,31 +85,56 @@ export function shareCacheStatus(streams: ParsedStream[]): void {
  * A debrid stream that doesn't know which file of the torrent it plays (no
  * fileIdx, or -1 as builtin addons report an unchecked torrent) carries the
  * whole torrent's name and size, which in a season pack misleads sorting and
- * size filters. When the other copies of the torrent agree on one file, take
- * that file's name, size and fileIdx, keeping the torrent's as the folder.
+ * size filters. Give it the file other copies of the torrent report, keeping
+ * the torrent's name and size as the folder:
+ * - when the copies that know their fileIdx agree on one, the smallest of
+ *   them, with its fileIdx;
+ * - when none of them reports a smaller file, the file copies without a
+ *   fileIdx report, if they all name the same file at about the same size;
+ *   the fileIdx stays unknown.
  * The playback URL is already built and picks the file itself, and parsedFile
  * stays as parsed from the torrent name, which usually says more. P2P streams
  * are left alone: their client plays the file their fileIdx points to.
  */
 export function shareFileInfo(streams: ParsedStream[]): void {
+  interface ReportedFile {
+    filename: string;
+    size: number;
+    fileIdx?: number;
+  }
   const hashOf = (stream: ParsedStream) =>
     stream.torrent?.infoHash?.toLowerCase();
   const knownFileIdx = (stream: ParsedStream) => {
     const fileIdx = stream.torrent?.fileIdx;
     return typeof fileIdx === 'number' && fileIdx >= 0 ? fileIdx : undefined;
   };
+  const smallest = (files: ReportedFile[]) =>
+    files.reduce((min, file) => (file.size < min.size ? file : min));
+  const sameFile = (files: ReportedFile[]) => {
+    const name = files[0].filename.trim().toLowerCase();
+    const sizes = files.map((file) => file.size);
+    return (
+      files.every((file) => file.filename.trim().toLowerCase() === name) &&
+      Math.max(...sizes) <= Math.min(...sizes) * 1.01
+    );
+  };
 
+  // Taken before any copy changes, so a copy given a file doesn't donate it.
   const fileIdxsByHash = new Map<string, Set<number>>();
-  const donorByHash = new Map<string, ParsedStream>();
+  const filesByHash = new Map<string, ReportedFile[]>();
   for (const stream of streams) {
     const hash = hashOf(stream);
+    if (!hash) continue;
     const fileIdx = knownFileIdx(stream);
-    if (!hash || fileIdx === undefined) continue;
-    let fileIdxs = fileIdxsByHash.get(hash);
-    if (!fileIdxs) fileIdxsByHash.set(hash, (fileIdxs = new Set()));
-    fileIdxs.add(fileIdx);
-    if (!donorByHash.has(hash) && stream.filename && stream.size) {
-      donorByHash.set(hash, stream);
+    if (fileIdx !== undefined) {
+      let fileIdxs = fileIdxsByHash.get(hash);
+      if (!fileIdxs) fileIdxsByHash.set(hash, (fileIdxs = new Set()));
+      fileIdxs.add(fileIdx);
+    }
+    if (stream.filename?.trim() && stream.size) {
+      let files = filesByHash.get(hash);
+      if (!files) filesByHash.set(hash, (files = []));
+      files.push({ filename: stream.filename, size: stream.size, fileIdx });
     }
   }
 
@@ -120,21 +145,31 @@ export function shareFileInfo(streams: ParsedStream[]): void {
       !stream.torrent ||
       stream.type !== 'debrid' ||
       knownFileIdx(stream) !== undefined ||
-      fileIdxsByHash.get(hash)?.size !== 1
+      !stream.size ||
+      (fileIdxsByHash.get(hash)?.size ?? 0) > 1
     ) {
       continue;
     }
-    const donor = donorByHash.get(hash);
-    // A donor file about as large as the stream (within 5%, as the parser
-    // drops such a folderSize) means a single-file torrent, where the stream
-    // already shows the file.
-    if (!donor || !stream.size || donor.size! >= stream.size * 0.95) continue;
+    // A file about as large as the stream (within 5%, as the parser drops
+    // such a folderSize) is the whole torrent: a single-file torrent, or an
+    // addon reporting the torrent's size for its file.
+    const maxSize = stream.size * 0.95;
+    const files = (filesByHash.get(hash) ?? []).filter(
+      (file) => file.size < maxSize
+    );
+    const indexed = files.filter((file) => file.fileIdx !== undefined);
+    const donor = indexed.length
+      ? smallest(indexed)
+      : files.length && sameFile(files)
+        ? smallest(files)
+        : undefined;
+    if (!donor) continue;
 
     stream.folderSize ||= stream.size;
     stream.folderName ||= stream.filename;
     stream.filename = donor.filename;
     stream.size = donor.size;
-    stream.torrent.fileIdx = donor.torrent!.fileIdx;
+    if (donor.fileIdx !== undefined) stream.torrent.fileIdx = donor.fileIdx;
   }
 }
 
