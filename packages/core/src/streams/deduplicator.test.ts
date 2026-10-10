@@ -506,6 +506,23 @@ describe('deduplicate sources', () => {
     );
   });
 
+  it('groups copies whose infoHash differs in case into one full list', async () => {
+    const streams = [
+      torrent('jacred', 'ABCDEF', rd(false), -1),
+      torrent('mediafusion', 'abcdef', rd(true), 0),
+    ];
+    shareCacheStatus(streams);
+    const results = await deduplicator().deduplicate(streams);
+    assert.equal(results.length, 1);
+    assert.deepEqual(
+      results[0].dedupSources?.map(({ addon, cached }) => ({ addon, cached })),
+      [
+        { addon: 'JacRed', cached: [] },
+        { addon: 'MediaFusion', cached: ['realdebrid'] },
+      ]
+    );
+  });
+
   it('adds nothing when dedup is disabled', async () => {
     const stream = torrent('jacred', 'abc', tb(true));
     await deduplicator({ enabled: false }).deduplicate([stream]);
