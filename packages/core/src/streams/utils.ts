@@ -81,6 +81,63 @@ export function shareCacheStatus(streams: ParsedStream[]): void {
   }
 }
 
+/**
+ * A debrid stream that doesn't know which file of the torrent it plays (no
+ * fileIdx, or -1 as builtin addons report an unchecked torrent) carries the
+ * whole torrent's name and size, which in a season pack misleads sorting and
+ * size filters. When the other copies of the torrent agree on one file, take
+ * that file's name, size and fileIdx, keeping the torrent's as the folder.
+ * The playback URL is already built and picks the file itself, and parsedFile
+ * stays as parsed from the torrent name, which usually says more. P2P streams
+ * are left alone: their client plays the file their fileIdx points to.
+ */
+export function shareFileInfo(streams: ParsedStream[]): void {
+  const hashOf = (stream: ParsedStream) =>
+    stream.torrent?.infoHash?.toLowerCase();
+  const knownFileIdx = (stream: ParsedStream) => {
+    const fileIdx = stream.torrent?.fileIdx;
+    return typeof fileIdx === 'number' && fileIdx >= 0 ? fileIdx : undefined;
+  };
+
+  const fileIdxsByHash = new Map<string, Set<number>>();
+  const donorByHash = new Map<string, ParsedStream>();
+  for (const stream of streams) {
+    const hash = hashOf(stream);
+    const fileIdx = knownFileIdx(stream);
+    if (!hash || fileIdx === undefined) continue;
+    let fileIdxs = fileIdxsByHash.get(hash);
+    if (!fileIdxs) fileIdxsByHash.set(hash, (fileIdxs = new Set()));
+    fileIdxs.add(fileIdx);
+    if (!donorByHash.has(hash) && stream.filename && stream.size) {
+      donorByHash.set(hash, stream);
+    }
+  }
+
+  for (const stream of streams) {
+    const hash = hashOf(stream);
+    if (
+      !hash ||
+      !stream.torrent ||
+      stream.type !== 'debrid' ||
+      knownFileIdx(stream) !== undefined ||
+      fileIdxsByHash.get(hash)?.size !== 1
+    ) {
+      continue;
+    }
+    const donor = donorByHash.get(hash);
+    // A donor file about as large as the stream (within 5%, as the parser
+    // drops such a folderSize) means a single-file torrent, where the stream
+    // already shows the file.
+    if (!donor || !stream.size || donor.size! >= stream.size * 0.95) continue;
+
+    stream.folderSize ||= stream.size;
+    stream.folderName ||= stream.filename;
+    stream.filename = donor.filename;
+    stream.size = donor.size;
+    stream.torrent.fileIdx = donor.torrent!.fileIdx;
+  }
+}
+
 class StreamUtils {
   public static createDownloadableStream(stream: ParsedStream): ParsedStream {
     const copy = structuredClone(stream);
