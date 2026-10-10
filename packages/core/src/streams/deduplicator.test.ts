@@ -78,6 +78,82 @@ describe('deduplicate', () => {
   });
 });
 
+function makeTorrentStream(
+  infoHash: string,
+  fileIdx: number | null | undefined
+): ParsedStream {
+  return {
+    ...makeStream(undefined, [], []),
+    torrent: { infoHash, fileIdx },
+  } as unknown as ParsedStream;
+}
+
+async function dedupByInfoHash(streams: ParsedStream[]) {
+  const deduplicator = new StreamDeduplicator({
+    deduplicator: {
+      enabled: true,
+      keys: ['infoHash'],
+      p2p: 'single_result',
+    },
+    presets: [],
+    services: [],
+  } as unknown as UserData);
+  return deduplicator.deduplicate(streams);
+}
+
+const HASH = 'a'.repeat(40);
+
+describe('deduplicate by infoHash', () => {
+  it('groups streams without a fileIdx with the only known fileIdx', async () => {
+    const results = await dedupByInfoHash([
+      makeTorrentStream(HASH, -1),
+      makeTorrentStream(HASH, undefined),
+      makeTorrentStream(HASH, null),
+      makeTorrentStream(HASH, 3),
+      makeTorrentStream(HASH, 3),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('keeps different files of a torrent apart and does not guess for streams without a fileIdx', async () => {
+    const results = await dedupByInfoHash([
+      makeTorrentStream(HASH, 1),
+      makeTorrentStream(HASH, -1),
+      makeTorrentStream(HASH, 2),
+      makeTorrentStream(HASH, undefined),
+    ]);
+    assert.deepEqual(
+      results.map((s) => s.torrent?.fileIdx ?? -1).sort(),
+      [-1, 1, 2]
+    );
+  });
+
+  it('groups streams of a torrent when none has a fileIdx', async () => {
+    const results = await dedupByInfoHash([
+      makeTorrentStream(HASH, undefined),
+      makeTorrentStream(HASH, -1),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('keeps different files of a torrent apart', async () => {
+    const results = await dedupByInfoHash([
+      makeTorrentStream(HASH, 0),
+      makeTorrentStream(HASH, 1),
+    ]);
+    assert.equal(results.length, 2);
+  });
+
+  it('does not group different torrents', async () => {
+    const results = await dedupByInfoHash([
+      makeTorrentStream(HASH, 12),
+      makeTorrentStream(HASH + '1', 2),
+      makeTorrentStream('b'.repeat(40), undefined),
+    ]);
+    assert.equal(results.length, 3);
+  });
+});
+
 describe('mergeLanguagesAndSubtitles', () => {
   it('takes only the probe, discarding the indexer entirely', () => {
     const winner = makeStream(undefined, [], []);
