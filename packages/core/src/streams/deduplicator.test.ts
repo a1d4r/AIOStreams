@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import StreamDeduplicator from './deduplicator.js';
+import { shareCacheStatus } from './utils.js';
 import type { ParsedStream, UserData } from '../db/schemas.js';
 
 function makeStream(
@@ -298,6 +299,45 @@ describe('deduplicate sources', () => {
       ['Torrentio']
     );
     assert.equal(http.dedupSources, undefined);
+  });
+
+  it('keeps a raised copy without a fileIdx apart when the torrent has several files', async () => {
+    // Which file the -1 copy plays is unknown, so it is not grouped with
+    // either known file and lists only its own addon, without own cache.
+    const streams = [
+      torrent('mediafusion', 'abc', rd(true), 1),
+      torrent('torrentio', 'abc', rd(true), 2),
+      torrent('jacred', 'abc', rd(false), -1),
+    ];
+    shareCacheStatus(streams);
+    const results = await deduplicator().deduplicate(streams);
+    assert.deepEqual(
+      results.map((s) => ({
+        addon: s.addon.name,
+        service: s.service,
+        sources: s.dedupSources?.map(({ addon, cached }) => ({
+          addon,
+          cached,
+        })),
+      })),
+      [
+        {
+          addon: 'MediaFusion',
+          service: { id: 'realdebrid', cached: true, cacheShared: undefined },
+          sources: [{ addon: 'MediaFusion', cached: ['realdebrid'] }],
+        },
+        {
+          addon: 'Torrentio',
+          service: { id: 'realdebrid', cached: true, cacheShared: undefined },
+          sources: [{ addon: 'Torrentio', cached: ['realdebrid'] }],
+        },
+        {
+          addon: 'JacRed',
+          service: { id: 'realdebrid', cached: true, cacheShared: true },
+          sources: [{ addon: 'JacRed', cached: [] }],
+        },
+      ]
+    );
   });
 
   it('adds nothing when dedup is disabled', async () => {
