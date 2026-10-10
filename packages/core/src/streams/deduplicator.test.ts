@@ -163,6 +163,169 @@ describe('deduplicate by infoHash', () => {
   });
 });
 
+describe('deduplicate by file', () => {
+  const GB = 1024 ** 3;
+  const PACK = 'Game of Thrones S01-S08 1080p BDRip';
+  const FILE = 'Game.of.Thrones.S01E01.Winter.Is.Coming.mkv';
+
+  function copy(
+    fileIdx: number | null | undefined,
+    filename?: string,
+    size?: number,
+    infoHash = HASH,
+    type: ParsedStream['type'] = 'p2p'
+  ): ParsedStream {
+    return {
+      ...makeTorrentStream(infoHash, fileIdx),
+      type,
+      filename,
+      size,
+    } as unknown as ParsedStream;
+  }
+
+  it('groups copies of one file whatever fileIdx they report', async () => {
+    const streams = [
+      copy(71, FILE, 4.7 * GB),
+      copy(0, FILE, 4.7 * GB),
+      copy(undefined, FILE, 4.71 * GB),
+      // Reports the pack's size for the file.
+      copy(71, FILE, 226.8 * GB),
+      // Named after the torrent.
+      copy(-1, PACK, 226.8 * GB),
+      // Names nothing.
+      copy(undefined),
+    ];
+    const results = await dedupByInfoHash(streams);
+    assert.equal(results.length, 1);
+  });
+
+  it('keeps files of different names apart whatever fileIdx they report', async () => {
+    for (const fileIdxs of [
+      [1, 2],
+      [0, 0],
+      [undefined, undefined],
+    ]) {
+      const results = await dedupByInfoHash([
+        copy(fileIdxs[0], 'Show.S01E01.mkv', 2 * GB),
+        copy(fileIdxs[1], 'Show.S01E02.mkv', 2 * GB),
+      ]);
+      assert.equal(results.length, 2);
+    }
+  });
+
+  it('keeps same-named files of different sizes apart', async () => {
+    const results = await dedupByInfoHash([
+      copy(3, '00001.m2ts', 30 * GB),
+      copy(3, '00001.m2ts', 5 * GB),
+      copy(undefined, PACK, 70 * GB),
+    ]);
+    assert.equal(results.filter((s) => s.filename === '00001.m2ts').length, 2);
+  });
+
+  it('matches names by basename, trimmed and in any case, and hashes in any case', async () => {
+    const results = await dedupByInfoHash([
+      copy(0, `Season 1/${FILE}`, 4.7 * GB),
+      copy(5, ` ${FILE.toUpperCase()} `, 4.7 * GB, HASH.toUpperCase()),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('falls back to fileIdx for a copy named after the torrent of several files', async () => {
+    const results = await dedupByInfoHash([
+      copy(1, 'Show.S01E01.mkv', 2 * GB),
+      copy(2, 'Show.S01E02.mkv', 2 * GB),
+      copy(-1, PACK, 20 * GB),
+      copy(undefined, PACK, 20 * GB),
+      copy(2, PACK, 20 * GB),
+    ]);
+    assert.deepEqual(results.map((s) => s.filename ?? '').sort(), [
+      PACK,
+      'Show.S01E01.mkv',
+      'Show.S01E02.mkv',
+    ]);
+    const e02 = results.find((s) => s.filename === 'Show.S01E02.mkv');
+    assert.equal(e02?.torrent?.fileIdx, 2);
+  });
+
+  it('gives a copy without a name the file whose copies report its fileIdx', async () => {
+    const results = await dedupByInfoHash([
+      copy(1, 'Show.S01E01.mkv', 2 * GB),
+      copy(2, 'Show.S01E02.mkv', 2 * GB),
+      copy(1),
+      copy(7),
+    ]);
+    assert.equal(results.length, 3);
+  });
+
+  it('groups a copy naming the file without a size, or with a tiny one', async () => {
+    const results = await dedupByInfoHash([
+      copy(0, FILE, 4.7 * GB),
+      copy(5, FILE),
+      copy(undefined, FILE, 0.001 * GB),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('groups a copy named after the torrent with the only file, whatever its fileIdx', async () => {
+    const results = await dedupByInfoHash([
+      copy(0, PACK, 230 * GB),
+      copy(undefined, FILE, 4.1 * GB),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('never groups a copy naming a file without a size with another file', async () => {
+    const results = await dedupByInfoHash([
+      copy(0, 'Show.S01E01.mkv', 2 * GB),
+      copy(0, 'Show.S01E02.mkv'),
+    ]);
+    assert.equal(results.length, 2);
+  });
+
+  it('groups p2p and debrid copies of one file', async () => {
+    const results = await dedupByInfoHash([
+      copy(71, FILE, 4.7 * GB, HASH, 'debrid'),
+      copy(0, FILE, 4.7 * GB),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('lists every addon of the file in sources', async () => {
+    const results = await new StreamDeduplicator({
+      deduplicator: { enabled: true, keys: ['infoHash'], p2p: 'single_result' },
+      presets: [],
+      services: [],
+    } as unknown as UserData).deduplicate(
+      [
+        ['MediaFusion', 71, FILE, 226.8 * GB],
+        ['Torrentio', 71, FILE, 4.7 * GB],
+        ['JacRed', -1, PACK, 226.8 * GB],
+        ['JacRed', 0, FILE, 4.7 * GB],
+        ['Comet', undefined, FILE, 4.7 * GB],
+      ].map(([name, fileIdx, filename, size]) => {
+        const stream = copy(
+          fileIdx as number | undefined,
+          filename as string,
+          size as number
+        );
+        stream.addon = {
+          ...stream.addon,
+          name: name as string,
+          preset: { id: name as string },
+        } as ParsedStream['addon'];
+        return stream;
+      })
+    );
+    assert.equal(results.length, 1);
+    assert.deepEqual(results[0].dedupSources?.map((s) => s.addon).sort(), [
+      'Comet',
+      'JacRed',
+      'MediaFusion',
+      'Torrentio',
+    ]);
+  });
+});
+
 describe('mergeLanguagesAndSubtitles', () => {
   it('takes only the probe, discarding the indexer entirely', () => {
     const winner = makeStream(undefined, [], []);
