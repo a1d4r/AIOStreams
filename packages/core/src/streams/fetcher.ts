@@ -14,6 +14,7 @@ import StreamFilter from './filterer.js';
 import StreamPrecompute from './precomputer.js';
 import StreamDeduplicator from './deduplicator.js';
 import { StreamContext } from './context.js';
+import { shareCacheStatus } from './utils.js';
 import {
   classifyAddonError,
   type AnalyticsDisposition,
@@ -260,6 +261,8 @@ class StreamFetcher {
       await resolveStoredMediaInfo(groupStreams, context);
       await resolveRemuxDbMediaInfo(groupStreams, context, this.userData);
       mediaInfoMs += Date.now() - mediaInfoStart;
+
+      shareCacheStatus(groupStreams);
 
       // Blocklist runs before dedup so a flagged candidate never survives
       // as a failover variant harvested from discarded duplicates.
