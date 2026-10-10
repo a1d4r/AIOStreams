@@ -137,6 +137,24 @@ class StreamDeduplicator {
       }
     }
 
+    // Addons report "no file selected" as undefined, null or -1. Collect the
+    // real fileIdx values seen for each infoHash so such streams can be keyed
+    // to the file when it is unambiguous.
+    const knownFileIdx = (stream: ParsedStream): number | undefined => {
+      const fileIdx = stream.torrent?.fileIdx;
+      return typeof fileIdx === 'number' && fileIdx >= 0 ? fileIdx : undefined;
+    };
+    const knownFileIdxsByHash = new Map<string, Set<number>>();
+    for (const stream of streams) {
+      const infoHash = stream.torrent?.infoHash;
+      const fileIdx = knownFileIdx(stream);
+      if (!infoHash || fileIdx === undefined) continue;
+      if (!knownFileIdxsByHash.has(infoHash)) {
+        knownFileIdxsByHash.set(infoHash, new Set());
+      }
+      knownFileIdxsByHash.get(infoHash)!.add(fileIdx);
+    }
+
     // Process ALL streams (including excluded ones) for deduplication grouping
     for (const stream of streams) {
       // Create a unique key based on the selected deduplication methods
@@ -160,17 +178,25 @@ class StreamDeduplicator {
       const isUsenet =
         stream.type === 'usenet' || stream.type === 'stremio-usenet';
 
-      // Some addons provide fileIdx (to distinguish multiple files
-      // within a single torrent), while others don't. This creates an unavoidable trade-off
-      // where addons that provide fileIdx will not deduplicate properly with those that don't
-      // via infoHash alone.
+      // Some addons provide fileIdx (to distinguish multiple files within a
+      // single torrent), while others don't. A stream without one takes the
+      // torrent's only known fileIdx; if the torrent has several, it can't
+      // tell which file it is and only groups with other streams lacking one.
       if (
         deduplicationKeys.includes('infoHash') &&
         stream.torrent?.infoHash &&
         !isUsenet
       ) {
+        const infoHash = stream.torrent.infoHash;
+        let fileIdx = knownFileIdx(stream);
+        const hashFileIdxs = knownFileIdxsByHash.get(infoHash);
+        if (fileIdx === undefined && hashFileIdxs?.size === 1) {
+          [fileIdx] = hashFileIdxs;
+        }
         currentStreamKeyStrings.push(
-          `infoHash:${stream.torrent.infoHash}${stream.torrent.fileIdx ?? 0}`
+          fileIdx === undefined
+            ? `infoHash:${infoHash}`
+            : `infoHash:${infoHash}:${fileIdx}`
         );
       }
       if (deduplicationKeys.includes('infoHash') && isUsenet && stream.nzbUrl) {
