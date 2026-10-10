@@ -252,7 +252,7 @@ describe('shareFileInfo', () => {
   it('changes nothing when copies without a fileIdx disagree', () => {
     for (const other of [
       { filename: 'Game.of.Thrones.S01E02.mkv', size: 32.7 * GB },
-      { filename: FILE, size: 35 * GB },
+      { filename: FILE, size: 36 * GB },
     ]) {
       const recipient = makeCopy('abc', -1, {
         filename: PACK,
@@ -386,7 +386,7 @@ describe('shareFileInfo', () => {
     shareFileInfo([
       packSized,
       makeCopy('abc', 71, { filename: FILE, size: 4.7 * GB }),
-      makeCopy('abc', 0, { filename: FILE, size: 5 * GB }),
+      makeCopy('abc', 0, { filename: FILE, size: 5.2 * GB }),
       makeCopy('abc', -1, { filename: PACK, size: 300 * GB }),
     ]);
     assert.equal(packSized.size, 300 * GB);
@@ -442,6 +442,34 @@ describe('shareFileInfo', () => {
     const once = structuredClone(streams);
     shareFileInfo(streams);
     assert.deepEqual(streams, once);
+  });
+
+  it('keeps the file it told when run again on fewer copies', () => {
+    // Filters drop the copy reporting the torrent's size, which told the
+    // others apart.
+    const torrentio = makeCopy('abc', 3, { filename: FILE, size: 20 * GB });
+    const mediaFusion = makeCopy('abc', 10, { filename: FILE, size: 25 * GB });
+    const jacRed = makeCopy('abc', -1, { filename: PACK, size: 45 * GB });
+    shareFileInfo([torrentio, mediaFusion, jacRed]);
+    const told = structuredClone([torrentio, mediaFusion]);
+    shareFileInfo([torrentio, mediaFusion]);
+    assert.deepEqual([torrentio, mediaFusion], told);
+    assert.equal(mediaFusion.size, 25 * GB);
+    assert.notEqual(torrentio.torrentFile?.size, mediaFusion.torrentFile?.size);
+  });
+
+  it('leaves a sample its size', () => {
+    const sample = makeCopy('abc', undefined, {
+      filename: `Sample/${FILE}`,
+      size: 0.03 * GB,
+    });
+    shareFileInfo([
+      sample,
+      makeCopy('abc', 0, { filename: FILE, size: 4.7 * GB }),
+      makeCopy('abc', 1, { filename: FILE, size: 4.7 * GB }),
+    ]);
+    assert.equal(sample.size, 0.03 * GB);
+    assert.equal(sample.folderSize, undefined);
   });
 
   it('leaves p2p copies and other torrents alone', () => {
