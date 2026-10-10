@@ -1540,6 +1540,19 @@ export const ParsedStreamSchema = z.object({
       })
     )
     .optional(),
+  // Addons with a copy of this torrent in the stream's duplicate group, set by
+  // the deduplicator. `cached` holds the services the addon's own cache check
+  // reported cached (not ones shared from another copy). Output as
+  // streamData.sources.
+  dedupSources: z
+    .array(
+      z.object({
+        instanceId: z.string(),
+        addon: z.string(),
+        cached: z.array(z.enum(constants.SERVICES)),
+      })
+    )
+    .optional(),
   servers: z.array(z.string().min(1)).optional(),
   rarUrls: z.array(SourceSchema).nullable().optional(),
   zipUrls: z.array(SourceSchema).nullable().optional(),
@@ -1848,6 +1861,14 @@ export const AIOStream = StreamSchema.extend({
         .optional(),
       duration: z.number().optional(),
       library: z.boolean().optional(),
+      sources: z
+        .array(
+          z.object({
+            addon: z.string(),
+            cached: z.array(z.enum(constants.SERVICES)),
+          })
+        )
+        .optional(),
       id: z.string().min(1).optional(),
     })
     .optional(),

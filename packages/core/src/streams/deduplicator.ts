@@ -415,6 +415,10 @@ class StreamDeduplicator {
       }
     }
 
+    for (const group of finalDuplicateGroupsMap.values()) {
+      this.attachSources(group, processedStreams);
+    }
+
     let deduplicatedStreams = StreamUtils.mergeStreams(
       Array.from(processedStreams)
     );
@@ -487,6 +491,76 @@ class StreamDeduplicator {
     }
 
     return 0;
+  }
+
+  /**
+   * Record on each kept torrent stream of a duplicate group which addons had a
+   * copy of the same torrent in the group, including discarded copies and the
+   * sources an earlier dedup pass recorded on them. The stream's own addon
+   * comes first, then the rest in the user's addon order; each addon appears
+   * once. `cached` lists the services the addon's own cache check reported
+   * cached, so status shared by shareCacheStatus does not count.
+   */
+  private attachSources(group: ParsedStream[], kept: Set<ParsedStream>): void {
+    type Source = NonNullable<ParsedStream['dedupSources']>[number];
+    const byHash = new Map<string, Map<string, Source>>();
+    const add = (hash: string, source: Source) => {
+      let sources = byHash.get(hash);
+      if (!sources) byHash.set(hash, (sources = new Map()));
+      const existing = sources.get(source.instanceId);
+      if (!existing) {
+        sources.set(source.instanceId, {
+          ...source,
+          cached: [...source.cached],
+        });
+        return;
+      }
+      for (const id of source.cached) {
+        if (!existing.cached.includes(id)) existing.cached.push(id);
+      }
+    };
+
+    for (const stream of group) {
+      const hash = stream.torrent?.infoHash?.toLowerCase();
+      if (!hash) continue;
+      const service = stream.service;
+      add(hash, {
+        instanceId: stream.addon.preset.id,
+        addon: stream.addon.name,
+        cached: service?.cached && !service.cacheShared ? [service.id] : [],
+      });
+      for (const source of stream.dedupSources ?? []) add(hash, source);
+    }
+    if (byHash.size === 0) return;
+
+    const presetIds = (this.userData.presets ?? []).map(
+      (preset) => preset.instanceId
+    );
+    const services = (this.userData.services ?? [])
+      .filter((service) => service.enabled)
+      .map((service) => service.id);
+    const rank = (list: string[], id: string) => {
+      const index = list.indexOf(id);
+      return index === -1 ? list.length : index;
+    };
+
+    for (const stream of group) {
+      const hash = stream.torrent?.infoHash?.toLowerCase();
+      if (!hash || !kept.has(stream)) continue;
+      const own = stream.addon.preset.id;
+      stream.dedupSources = [...byHash.get(hash)!.values()]
+        .sort(
+          (a, b) =>
+            Number(b.instanceId === own) - Number(a.instanceId === own) ||
+            rank(presetIds, a.instanceId) - rank(presetIds, b.instanceId)
+        )
+        .map((source) => ({
+          ...source,
+          cached: [...source.cached].sort(
+            (a, b) => rank(services, a) - rank(services, b)
+          ),
+        }));
+    }
   }
 
   /**
