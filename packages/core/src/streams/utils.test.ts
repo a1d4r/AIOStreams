@@ -268,6 +268,22 @@ describe('shareFileInfo', () => {
     }
   });
 
+  it('leaves a copy showing a file to copies without a fileIdx', () => {
+    const recipient = makeCopy('abc', undefined, {
+      filename: FILE,
+      size: 2.1 * GB,
+    });
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', 0, { filename: FILE, size: 2.1 * GB }),
+      makeCopy('abc', 0, { filename: FILE, size: 20.8 * GB }),
+      makeCopy('abc', undefined, { filename: 'Extra.mkv', size: 0.02 * GB }),
+    ]);
+    assert.equal(recipient.filename, FILE);
+    assert.equal(recipient.size, 2.1 * GB);
+    assert.equal(recipient.folderSize, undefined);
+  });
+
   it('ignores copies without a fileIdx when a copy knows the file', () => {
     const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
     shareFileInfo([
