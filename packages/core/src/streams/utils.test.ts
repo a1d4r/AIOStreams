@@ -150,7 +150,7 @@ describe('shareFileInfo', () => {
     const recipient = makeCopy('abc', -1, { filename: PACK, size: 2000 * GB });
     shareFileInfo([
       makeCopy('abc', 5, { filename: FILE, size: 20 * GB }),
-      makeCopy('abc', 6, { filename: FILE, size: 21 * GB }),
+      makeCopy('abc', 6, { filename: FILE, size: 22 * GB }),
       recipient,
     ]);
     assert.equal(recipient.filename, PACK);
@@ -201,20 +201,21 @@ describe('shareFileInfo', () => {
     assert.equal(recipient.torrent?.fileIdx, -1);
   });
 
-  it('takes the smallest known file, skipping one as large as the torrent', () => {
+  it('gives a copy reporting the torrent size the size its file agrees on', () => {
     const recipient = makeCopy('abc', -1, { filename: PACK, size: 325 * GB });
     const packSized = makeCopy('abc', 0, { filename: FILE, size: 325 * GB });
     shareFileInfo([
       recipient,
       packSized,
       makeCopy('abc', 0, { filename: FILE, size: 34 * GB }),
-      makeCopy('abc', undefined, { filename: 'Other.mkv', size: 34 * GB }),
     ]);
+    assert.equal(packSized.size, 34 * GB);
+    assert.equal(packSized.folderSize, 325 * GB);
+    assert.equal(packSized.filename, FILE);
     assert.equal(recipient.filename, FILE);
     assert.equal(recipient.size, 34 * GB);
     assert.equal(recipient.folderSize, 325 * GB);
     assert.equal(recipient.torrent?.fileIdx, 0);
-    assert.equal(packSized.size, 325 * GB);
   });
 
   it('takes the file copies without a fileIdx agree on, leaving it unknown', () => {
@@ -237,7 +238,7 @@ describe('shareFileInfo', () => {
     assert.equal(p2p.size, 311 * GB);
   });
 
-  it('falls back to copies without a fileIdx when the known file is the torrent', () => {
+  it('takes the fileIdx of a copy that reported the torrent size for the file', () => {
     const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
     shareFileInfo([
       recipient,
@@ -245,13 +246,13 @@ describe('shareFileInfo', () => {
       makeCopy('abc', undefined, { filename: FILE, size: 32.7 * GB }),
     ]);
     assert.equal(recipient.size, 32.7 * GB);
-    assert.equal(recipient.torrent?.fileIdx, -1);
+    assert.equal(recipient.torrent?.fileIdx, 0);
   });
 
   it('changes nothing when copies without a fileIdx disagree', () => {
     for (const other of [
       { filename: 'Game.of.Thrones.S01E02.mkv', size: 32.7 * GB },
-      { filename: FILE, size: 33.1 * GB },
+      { filename: FILE, size: 35 * GB },
     ]) {
       const recipient = makeCopy('abc', -1, {
         filename: PACK,
@@ -311,29 +312,156 @@ describe('shareFileInfo', () => {
     assert.equal(indexedRecipient.torrent?.fileIdx, -1);
   });
 
-  it('ignores copies without a fileIdx when a copy knows the file', () => {
+  it('changes nothing when copies name different files, whatever their fileIdx', () => {
     const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
     shareFileInfo([
       recipient,
       makeCopy('abc', undefined, { filename: 'Other.mkv', size: 10 * GB }),
       makeCopy('abc', 3, { filename: FILE, size: 32.7 * GB }),
-      makeCopy('abc', undefined, { filename: FILE, size: 20 * GB }),
+    ]);
+    assert.equal(recipient.filename, PACK);
+    assert.equal(recipient.size, 311 * GB);
+    assert.equal(recipient.torrent?.fileIdx, -1);
+  });
+
+  it('gives the file its copies name even when their fileIdx differ', () => {
+    // A season pack as the NAS returned it: MediaFusion reports the pack's
+    // size for the file, TorBox numbers files differently from Real-Debrid.
+    const rdPack = makeCopy('abc', -1, { filename: PACK, size: 226.8 * GB });
+    const mediaFusion = makeCopy('abc', 71, {
+      filename: FILE,
+      size: 226.8 * GB,
+    });
+    const streams = [
+      mediaFusion,
+      makeCopy('abc', 71, { filename: FILE, size: 4.7 * GB }),
+      makeCopy('abc', 0, {
+        filename: FILE,
+        size: 4.7 * GB,
+        folderName: PACK,
+      }),
+      rdPack,
+      makeCopy('abc', undefined, { filename: FILE, size: 4.71 * GB }),
+    ];
+    streams[4].folderSize = 227 * GB;
+    shareFileInfo(streams);
+    assert.equal(mediaFusion.size, 4.7 * GB);
+    assert.equal(mediaFusion.folderSize, 226.8 * GB);
+    assert.equal(rdPack.filename, FILE);
+    assert.equal(rdPack.size, 4.7 * GB);
+    assert.equal(rdPack.folderSize, 226.8 * GB);
+    assert.equal(rdPack.folderName, PACK);
+    assert.equal(rdPack.torrent?.fileIdx, -1);
+  });
+
+  it('gives a copy named after the torrent the file, keeping its own fileIdx', () => {
+    const recipient = makeCopy('abc', 0, { filename: PACK, size: 230 * GB });
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', undefined, { filename: FILE, size: 4.1 * GB }),
+      makeCopy('abc', 3, { filename: FILE, size: 4.1 * GB }),
     ]);
     assert.equal(recipient.filename, FILE);
+    assert.equal(recipient.size, 4.1 * GB);
+    assert.equal(recipient.folderName, PACK);
+    assert.equal(recipient.torrent?.fileIdx, 0);
+  });
+
+  it('matches the file by its basename, trimmed and in any case', () => {
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', 2, { filename: `Season 1/${FILE}`, size: 32.7 * GB }),
+      makeCopy('abc', 2, {
+        filename: ` ${FILE.toUpperCase()}`,
+        size: 32.7 * GB,
+      }),
+    ]);
     assert.equal(recipient.size, 32.7 * GB);
-    assert.equal(recipient.torrent?.fileIdx, 3);
+    assert.equal(recipient.torrent?.fileIdx, 2);
+  });
+
+  it('keeps the size of a torrent-sized copy when smaller copies disagree', () => {
+    const packSized = makeCopy('abc', 71, { filename: FILE, size: 300 * GB });
+    shareFileInfo([
+      packSized,
+      makeCopy('abc', 71, { filename: FILE, size: 4.7 * GB }),
+      makeCopy('abc', 0, { filename: FILE, size: 5 * GB }),
+      makeCopy('abc', -1, { filename: PACK, size: 300 * GB }),
+    ]);
+    assert.equal(packSized.size, 300 * GB);
+    assert.equal(packSized.folderSize, undefined);
+  });
+
+  it('gives a copy reporting a tiny size for the file the size others agree on', () => {
+    const tiny = makeCopy('abc', undefined, {
+      filename: FILE,
+      size: 0.02 * GB,
+    });
+    shareFileInfo([
+      tiny,
+      makeCopy('abc', 0, { filename: FILE, size: 7.84 * GB }),
+      makeCopy('abc', undefined, { filename: FILE, size: 7.8 * GB }),
+    ]);
+    assert.equal(tiny.size, 7.8 * GB);
+    assert.equal(tiny.folderSize, undefined);
+  });
+
+  it('matches names whatever their spacing and punctuation', () => {
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', 2, { filename: 'Movie (2014) 4K.mkv', size: 32.7 * GB }),
+      makeCopy('abc', 2, { filename: 'Movie(2014) 4K.mkv', size: 32.7 * GB }),
+    ]);
+    assert.equal(recipient.filename, 'Movie (2014) 4K.mkv');
+    assert.equal(recipient.torrent?.fileIdx, 2);
+  });
+
+  it('keeps same-named files of different sizes apart', () => {
+    // Two discs of one BDMV torrent, each with its own 00001.m2ts.
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 70 * GB });
+    const first = makeCopy('abc', 3, { filename: '00001.m2ts', size: 30 * GB });
+    const second = makeCopy('abc', 9, { filename: '00001.m2ts', size: 5 * GB });
+    shareFileInfo([recipient, first, second]);
+    assert.equal(first.size, 30 * GB);
+    assert.equal(second.size, 5 * GB);
+    assert.equal(recipient.size, 70 * GB);
+    assert.equal(recipient.filename, PACK);
+  });
+
+  it('changes nothing more when run again', () => {
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 325 * GB });
+    const packSized = makeCopy('abc', 0, { filename: FILE, size: 325 * GB });
+    const streams = [
+      recipient,
+      packSized,
+      makeCopy('abc', 0, { filename: FILE, size: 34 * GB }),
+    ];
+    shareFileInfo(streams);
+    const once = structuredClone(streams);
+    shareFileInfo(streams);
+    assert.deepEqual(streams, once);
   });
 
   it('leaves p2p copies and other torrents alone', () => {
     const p2p = makeCopy('abc', -1, { filename: PACK, size: 2000 * GB }, 'p2p');
+    const p2pFile = makeCopy(
+      'abc',
+      5,
+      { filename: FILE, size: 2000 * GB },
+      'p2p'
+    );
     const other = makeCopy('def', -1, { filename: PACK, size: 2000 * GB });
     shareFileInfo([
       makeCopy('abc', 5, { filename: FILE, size: 20 * GB }),
       p2p,
+      p2pFile,
       other,
     ]);
     assert.equal(p2p.size, 2000 * GB);
     assert.equal(p2p.torrent?.fileIdx, -1);
+    assert.equal(p2pFile.size, 2000 * GB);
     assert.equal(other.size, 2000 * GB);
   });
 });
