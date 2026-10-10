@@ -83,14 +83,14 @@ export function shareCacheStatus(streams: ParsedStream[]): void {
 
 /**
  * A debrid stream that doesn't know which file of the torrent it plays (no
- * fileIdx, or -1 as builtin addons report an unchecked torrent) carries the
- * whole torrent's name and size, which in a season pack misleads sorting and
- * size filters. Give it the file other copies of the torrent report, keeping
- * the torrent's name and size as the folder:
+ * fileIdx, or -1 as builtin addons report an unchecked torrent) and is named
+ * after the torrent rather than a video file carries the whole torrent's name
+ * and size, which in a season pack misleads sorting and size filters. Give it
+ * the file other copies of the torrent report, keeping the torrent's name and
+ * size as the folder:
  * - when the copies that know their fileIdx agree on one, the smallest of
  *   them, with its fileIdx;
- * - when none of them reports a smaller file and the stream carries the
- *   largest size any copy reports (the torrent's), the file copies without a
+ * - when none of them reports a smaller file, the file copies without a
  *   fileIdx report, if they all name the same file at about the same size;
  *   the fileIdx stays unknown.
  * The playback URL is already built and picks the file itself, and parsedFile
@@ -109,6 +109,11 @@ export function shareFileInfo(streams: ParsedStream[]): void {
     const fileIdx = stream.torrent?.fileIdx;
     return typeof fileIdx === 'number' && fileIdx >= 0 ? fileIdx : undefined;
   };
+  // The extensions the deduplicator strips from filenames.
+  const namesVideoFile = (stream: ParsedStream) =>
+    /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|3gp|3g2|m2ts|ts|vob|ogv|ogm|divx|xvid|rm|rmvb|asf|mxf|mka|mks|mk3d|f4v|f4p|f4a|f4b)$/i.test(
+      stream.filename?.trim() ?? ''
+    );
   const smallest = (files: ReportedFile[]) =>
     files.reduce((min, file) => (file.size < min.size ? file : min));
   const sameFile = (files: ReportedFile[]) => {
@@ -123,7 +128,6 @@ export function shareFileInfo(streams: ParsedStream[]): void {
   // Taken before any copy changes, so a copy given a file doesn't donate it.
   const fileIdxsByHash = new Map<string, Set<number>>();
   const filesByHash = new Map<string, ReportedFile[]>();
-  const maxSizeByHash = new Map<string, number>();
   for (const stream of streams) {
     const hash = hashOf(stream);
     if (!hash) continue;
@@ -132,12 +136,6 @@ export function shareFileInfo(streams: ParsedStream[]): void {
       let fileIdxs = fileIdxsByHash.get(hash);
       if (!fileIdxs) fileIdxsByHash.set(hash, (fileIdxs = new Set()));
       fileIdxs.add(fileIdx);
-    }
-    if (stream.size) {
-      maxSizeByHash.set(
-        hash,
-        Math.max(maxSizeByHash.get(hash) ?? 0, stream.size)
-      );
     }
     if (stream.filename?.trim() && stream.size) {
       let files = filesByHash.get(hash);
@@ -153,6 +151,7 @@ export function shareFileInfo(streams: ParsedStream[]): void {
       !stream.torrent ||
       stream.type !== 'debrid' ||
       knownFileIdx(stream) !== undefined ||
+      namesVideoFile(stream) ||
       !stream.size ||
       (fileIdxsByHash.get(hash)?.size ?? 0) > 1
     ) {
@@ -166,12 +165,9 @@ export function shareFileInfo(streams: ParsedStream[]): void {
       (file) => file.size < maxSize
     );
     const indexed = files.filter((file) => file.fileIdx !== undefined);
-    // Without a fileIdx a smaller file may be one an addon picked wrongly (an
-    // extra), so only a copy showing the whole torrent takes it.
-    const showsTorrent = stream.size >= maxSizeByHash.get(hash)! * 0.95;
     const donor = indexed.length
       ? smallest(indexed)
-      : files.length && showsTorrent && sameFile(files)
+      : files.length && sameFile(files)
         ? smallest(files)
         : undefined;
     if (!donor) continue;
