@@ -146,7 +146,7 @@ class StreamDeduplicator {
     };
     const knownFileIdxsByHash = new Map<string, Set<number>>();
     for (const stream of streams) {
-      const infoHash = stream.torrent?.infoHash;
+      const infoHash = stream.torrent?.infoHash?.toLowerCase();
       const fileIdx = knownFileIdx(stream);
       if (!infoHash || fileIdx === undefined) continue;
       if (!knownFileIdxsByHash.has(infoHash)) {
@@ -182,12 +182,13 @@ class StreamDeduplicator {
       // single torrent), while others don't. A stream without one takes the
       // torrent's only known fileIdx; if the torrent has several, it can't
       // tell which file it is and only groups with other streams lacking one.
+      // Addons differ in infoHash case, so it is compared lower-cased.
       if (
         deduplicationKeys.includes('infoHash') &&
         stream.torrent?.infoHash &&
         !isUsenet
       ) {
-        const infoHash = stream.torrent.infoHash;
+        const infoHash = stream.torrent.infoHash.toLowerCase();
         let fileIdx = knownFileIdx(stream);
         const hashFileIdxs = knownFileIdxsByHash.get(infoHash);
         if (fileIdx === undefined && hashFileIdxs?.size === 1) {
