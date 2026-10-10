@@ -30,6 +30,25 @@ describe('shareCacheStatus', () => {
     assert.equal(cached.service?.cached, true);
   });
 
+  it('flags only the copies it raised as shared', () => {
+    const uncached = makeStream('abc', { id: 'realdebrid', cached: false });
+    const cached = makeStream('abc', { id: 'realdebrid', cached: true });
+    const tb = makeStream('abc', { id: 'torbox', cached: false });
+    shareCacheStatus([uncached, cached, tb]);
+    assert.equal(uncached.service?.cacheShared, true);
+    assert.equal(cached.service?.cacheShared, undefined);
+    assert.equal(tb.service?.cacheShared, undefined);
+  });
+
+  it('keeps the flags when run again', () => {
+    const uncached = makeStream('abc', { id: 'realdebrid', cached: false });
+    const cached = makeStream('abc', { id: 'realdebrid', cached: true });
+    shareCacheStatus([uncached, cached]);
+    shareCacheStatus([uncached, cached]);
+    assert.equal(uncached.service?.cacheShared, true);
+    assert.equal(cached.service?.cacheShared, undefined);
+  });
+
   it('compares infoHashes case-insensitively', () => {
     const uncached = makeStream('ABC', { id: 'realdebrid', cached: false });
     const cached = makeStream('abc', { id: 'realdebrid', cached: true });

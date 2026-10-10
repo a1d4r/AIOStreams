@@ -1502,6 +1502,8 @@ export const ParsedStreamSchema = z.object({
     .object({
       id: z.enum(constants.SERVICES),
       cached: z.boolean(),
+      /** Cached only because another copy of the torrent is cached on this service. */
+      cacheShared: z.boolean().optional(),
     })
     .optional(),
   /**Duration in milliseconds */

@@ -50,7 +50,9 @@ export function isServiceWrapEligibleP2PStream(
  * Addons check debrid cache availability in different ways, so copies of one
  * torrent on the same service can disagree. If any copy is cached on a service,
  * mark every copy of that infoHash on that service as cached. Runs before
- * filtering so uncached exclusion and dedup see the shared status.
+ * filtering so uncached exclusion and dedup see the shared status. Copies
+ * raised this way get `cacheShared` so they can be told apart from copies
+ * whose own addon reported them cached.
  */
 export function shareCacheStatus(streams: ParsedStream[]): void {
   const keyOf = (stream: ParsedStream) =>
@@ -67,8 +69,14 @@ export function shareCacheStatus(streams: ParsedStream[]): void {
 
   for (const stream of streams) {
     const key = keyOf(stream);
-    if (key && stream.service && cachedKeys.has(key)) {
+    if (
+      key &&
+      stream.service &&
+      !stream.service.cached &&
+      cachedKeys.has(key)
+    ) {
       stream.service.cached = true;
+      stream.service.cacheShared = true;
     }
   }
 }
