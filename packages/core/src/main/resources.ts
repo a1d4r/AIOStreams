@@ -357,7 +357,7 @@ export async function processStreams(
 
   // Addon groups and dynamic fetching share cached status and file info only
   // within each fetch, so share them again across all streams before the
-  // final dedup.
+  // final dedup. Streams told their file before filters keep it.
   shareCacheStatus(processedStreams);
   shareFileInfo(processedStreams);
   const dedupStart = Date.now();
