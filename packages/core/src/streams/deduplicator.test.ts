@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import StreamDeduplicator from './deduplicator.js';
-import { shareCacheStatus } from './utils.js';
+import { shareCacheStatus, shareFileInfo } from './utils.js';
 import type { ParsedStream, UserData } from '../db/schemas.js';
 
 function makeStream(
@@ -183,6 +183,16 @@ describe('deduplicate by file', () => {
     } as unknown as ParsedStream;
   }
 
+  function debridCopy(
+    fileIdx: number | undefined,
+    filename: string,
+    size: number
+  ): ParsedStream {
+    const stream = copy(fileIdx, filename, size, HASH, 'debrid');
+    stream.service = { id: 'realdebrid', cached: true };
+    return stream;
+  }
+
   it('groups copies of one file whatever fileIdx they report', async () => {
     const streams = [
       copy(71, FILE, 4.7 * GB),
@@ -323,6 +333,157 @@ describe('deduplicate by file', () => {
       'MediaFusion',
       'Torrentio',
     ]);
+  });
+
+  it('keeps files told apart before filters apart once filters drop copies', async () => {
+    for (const name of ['Movie.2012.BluRay.Remux.mkv', '00001.m2ts']) {
+      const torrentio = debridCopy(3, name, 20 * GB);
+      const mediaFusion = debridCopy(10, name, 25 * GB);
+      // An uncached copy reporting the torrent's size, which filters drop.
+      const jacRed = debridCopy(-1, PACK, 45 * GB);
+      shareFileInfo([torrentio, mediaFusion, jacRed]);
+      const filtered = [torrentio, mediaFusion];
+      shareFileInfo(filtered);
+      const fetched = await dedupByInfoHash(filtered);
+      shareFileInfo(fetched);
+      const results = await dedupByInfoHash(fetched);
+      assert.equal(results.length, 2);
+      assert.equal(mediaFusion.size, 25 * GB);
+    }
+  });
+
+  it('groups copies of one file told in different fetches', async () => {
+    const comet = copy(undefined, FILE, 5.38 * GB);
+    const mediaFusion = copy(0, FILE, 5.78 * GB);
+    const other = copy(1, 'Game.of.Thrones.S01E02.mkv', 5.5 * GB);
+    shareFileInfo([comet]);
+    shareFileInfo([mediaFusion, other]);
+    const streams = [comet, mediaFusion, other];
+    shareFileInfo(streams);
+    const results = await dedupByInfoHash(streams);
+    assert.equal(results.length, 2);
+  });
+
+  it('keeps files of one name in different folders apart', async () => {
+    for (const [a, b] of [
+      ['Season 1/E01.mkv', 'Season 2/E01.mkv'],
+      ['Show A/Show.S01E01.mkv', 'Show B/Show.S01E01.mkv'],
+      ['Disc1/BDMV/STREAM/00001.m2ts', 'Disc2/BDMV/STREAM/00001.m2ts'],
+    ]) {
+      const results = await dedupByInfoHash([
+        copy(0, a, 1 * GB),
+        copy(10, b, 1.03 * GB),
+      ]);
+      assert.equal(results.length, 2, a);
+    }
+  });
+
+  it('keeps a copy without a folder apart when the name has several', async () => {
+    const results = await dedupByInfoHash([
+      copy(0, 'Show A/Show.S01E01.mkv', 1 * GB),
+      copy(10, 'Show B/Show.S01E01.mkv', 1 * GB),
+      copy(5, 'Show.S01E01.mkv', 1 * GB),
+    ]);
+    assert.equal(results.length, 3);
+  });
+
+  it('groups copies of a numbering name only in one folder, at one size to the byte or at one fileIdx', async () => {
+    const VOB = 'VTS_01_1.VOB';
+    const cases: [ParsedStream[], number][] = [
+      [[copy(3, '00001.m2ts', 30 * GB), copy(9, '00001.m2ts', 31 * GB)], 2],
+      [[copy(3, '00001.m2ts', 30 * GB), copy(3, '00001.m2ts', 31 * GB)], 1],
+      [[copy(3, '00001.m2ts', 30 * GB), copy(9, '00001.m2ts', 30 * GB)], 1],
+      [
+        [
+          copy(undefined, '00001.m2ts', 30 * GB),
+          copy(undefined, '00001.m2ts', 30 * GB),
+        ],
+        1,
+      ],
+      [
+        [
+          copy(undefined, '00001.m2ts', 30 * GB),
+          copy(undefined, '00001.m2ts', 31 * GB),
+        ],
+        2,
+      ],
+      [[copy(undefined, '00001.m2ts'), copy(undefined, '00001.m2ts')], 2],
+      [[copy(undefined, VOB, 1 * GB), copy(undefined, VOB, 1 * GB)], 2],
+      [
+        [
+          copy(3, 'BDMV/STREAM/00001.m2ts', 30 * GB),
+          copy(9, 'BDMV/STREAM/00001.m2ts', 31 * GB),
+        ],
+        1,
+      ],
+      [
+        [
+          copy(3, 'Disc1/BDMV/STREAM/00001.m2ts', 30 * GB),
+          copy(3, '00001.m2ts', 30 * GB),
+        ],
+        2,
+      ],
+      [[copy(1, '1.2.mkv', 1 * GB), copy(2, '12.mkv', 1.02 * GB)], 2],
+      [[copy(1, '.mkv', 1 * GB), copy(2, '!!.mkv', 1.02 * GB)], 2],
+      [[copy(1, 'E01.mkv', 1 * GB), copy(2, 'E01.mkv', 1.02 * GB)], 2],
+    ];
+    for (const [i, [streams, rows]] of cases.entries()) {
+      const results = await dedupByInfoHash(streams);
+      assert.equal(results.length, rows, `case ${i}`);
+    }
+  });
+
+  it('takes a size reported in GiB as GB for the same', async () => {
+    for (const jacRedName of [PACK, FILE]) {
+      // An uncached copy reporting the torrent's size, 7% over MediaFusion's.
+      const jacRed = debridCopy(-1, jacRedName, 6.2 * GB);
+      const streams = [
+        debridCopy(undefined, FILE, 5.38 * GB),
+        debridCopy(0, FILE, 5.78 * GB),
+        jacRed,
+      ];
+      shareFileInfo(streams);
+      const results = await dedupByInfoHash(streams);
+      assert.equal(results.length, 1, jacRedName);
+      assert.equal(jacRed.filename, FILE);
+      assert.equal(jacRed.size, 5.38 * GB);
+    }
+  });
+
+  it('keeps a sample apart whatever its size', async () => {
+    const sample = copy(undefined, `Sample/${FILE}`, 0.03 * GB);
+    const results = await dedupByInfoHash([
+      copy(0, FILE, 4.7 * GB),
+      copy(undefined, FILE, 4.7 * GB),
+      sample,
+    ]);
+    assert.equal(results.length, 2);
+    assert.ok(results.includes(sample));
+  });
+
+  it('never groups copies naming different files without sizes', async () => {
+    for (const fileIdx of [undefined, 0]) {
+      const results = await dedupByInfoHash([
+        copy(fileIdx, 'Show.S01E01.mkv'),
+        copy(fileIdx, 'Show.S01E02.mkv'),
+        copy(fileIdx, PACK),
+      ]);
+      assert.equal(results.length, 3);
+    }
+  });
+
+  it('matches names in either Unicode normalization, keeping letters apart', async () => {
+    const name = 'Брат 2 (2000) Бойцовский.mkv';
+    const nfd = await dedupByInfoHash([
+      copy(0, name.normalize('NFC'), 2 * GB),
+      copy(1, name.normalize('NFD'), 2 * GB),
+    ]);
+    assert.equal(nfd.length, 1);
+    const otherLetter = await dedupByInfoHash([
+      copy(0, name, 2 * GB),
+      copy(1, name.replace('й', 'и'), 2 * GB),
+    ]);
+    assert.equal(otherLetter.length, 2);
   });
 });
 

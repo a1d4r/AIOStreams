@@ -1553,6 +1553,12 @@ export const ParsedStreamSchema = z.object({
       })
     )
     .optional(),
+  // The file of its torrent the stream plays, told by shareFileInfo before
+  // filters for dedup: streams of one key at about the same size play one
+  // file. Internal, not output.
+  torrentFile: z
+    .object({ key: z.string(), size: z.number().optional() })
+    .optional(),
   servers: z.array(z.string().min(1)).optional(),
   rarUrls: z.array(SourceSchema).nullable().optional(),
   zipUrls: z.array(SourceSchema).nullable().optional(),
