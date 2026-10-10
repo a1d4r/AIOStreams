@@ -272,6 +272,63 @@ export function shareFileInfo(streams: ParsedStream[]): void {
   }
 }
 
+/**
+ * Key each torrent copy by the file it plays, for dedup: copies naming a
+ * video file by that file (see groupTorrents). A copy named after the torrent
+ * or naming nothing plays the torrent's only file; when the torrent has
+ * several, its fileIdx tells (undefined, null or -1 when unknown): its own,
+ * or else the torrent's only known one, maps to the file whose copies report
+ * it, if just one does. A copy that still can't tell its file groups only
+ * with copies of the torrent that can't either. A copy naming a file without
+ * a size never joins a file of another name.
+ */
+export function torrentFileKeys(
+  streams: ParsedStream[]
+): Map<ParsedStream, string> {
+  const keys = new Map<ParsedStream, string>();
+  for (const [hash, { copies, files }] of groupTorrents(streams)) {
+    const fileKey = (i: number) => `${hash}:file:${i}`;
+    files.forEach((file, i) => {
+      for (const copy of file.copies) keys.set(copy, fileKey(i));
+    });
+    const fileIdxs = new Set(
+      copies.map(knownFileIdx).filter((idx) => idx !== undefined)
+    );
+    for (const copy of copies) {
+      if (keys.has(copy)) continue;
+      const name = videoFileName(copy);
+      if (name && files.some((file) => file.name === name)) {
+        // No size to tell which of the files of its name it plays.
+        keys.set(copy, `${hash}:name:${name}`);
+        continue;
+      }
+      if (!name && files.length === 1) {
+        keys.set(copy, fileKey(0));
+        continue;
+      }
+      let fileIdx = knownFileIdx(copy);
+      if (fileIdx === undefined && fileIdxs.size === 1) [fileIdx] = fileIdxs;
+      if (fileIdx === undefined) {
+        keys.set(copy, hash);
+        continue;
+      }
+      // A copy naming a file the others don't name never takes theirs.
+      const owners = name
+        ? []
+        : files.flatMap((file, i) =>
+            file.copies.some((other) => knownFileIdx(other) === fileIdx)
+              ? [i]
+              : []
+          );
+      keys.set(
+        copy,
+        owners.length === 1 ? fileKey(owners[0]) : `${hash}:${fileIdx}`
+      );
+    }
+  }
+  return keys;
+}
+
 class StreamUtils {
   public static createDownloadableStream(stream: ParsedStream): ParsedStream {
     const copy = structuredClone(stream);
