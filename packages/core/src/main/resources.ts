@@ -353,6 +353,9 @@ export async function processStreams(
     processedStreams = await ctx.filterer.filterBlocklisted(processedStreams);
   }
 
+  // Addon groups and dynamic fetching share cached status only within each
+  // fetch, so share it again across all streams before the final dedup.
+  shareCacheStatus(processedStreams);
   const dedupStart = Date.now();
   processedStreams = await ctx.deduplicator.deduplicate(processedStreams);
   deduplicationMs = Date.now() - dedupStart;
