@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import StreamDeduplicator from './deduplicator.js';
+import { shareCacheStatus } from './utils.js';
 import type { ParsedStream, UserData } from '../db/schemas.js';
 
 function makeStream(
@@ -142,6 +143,14 @@ describe('deduplicate by infoHash', () => {
       makeTorrentStream(HASH, 1),
     ]);
     assert.equal(results.length, 2);
+  });
+
+  it('compares infoHashes case-insensitively', async () => {
+    const results = await dedupByInfoHash([
+      makeTorrentStream(HASH.toUpperCase(), -1),
+      makeTorrentStream(HASH, 0),
+    ]);
+    assert.equal(results.length, 1);
   });
 
   it('does not group different torrents', async () => {
@@ -293,5 +302,230 @@ describe('merge release', () => {
     own.indexer = 'rutor';
     const [kept] = await dedupByHash([own, other]);
     assert.equal(kept.indexer, 'rutor');
+  });
+});
+
+describe('deduplicate sources', () => {
+  const presets = ['jacred', 'comet', 'mediafusion', 'torrentio'];
+  const names: Record<string, string> = {
+    jacred: 'JacRed',
+    comet: 'Comet',
+    mediafusion: 'MediaFusion',
+    torrentio: 'Torrentio',
+  };
+
+  function torrent(
+    preset: string,
+    infoHash: string | undefined,
+    service?: { id: string; cached: boolean; cacheShared?: boolean },
+    fileIdx?: number
+  ): ParsedStream {
+    return {
+      id: Math.random().toString(),
+      type: service ? 'debrid' : 'p2p',
+      torrent: infoHash ? { infoHash, fileIdx } : undefined,
+      service: service ? { ...service } : undefined,
+      addon: {
+        instanceId: preset,
+        name: names[preset],
+        resultPassthrough: false,
+        preset: { id: preset },
+      },
+    } as unknown as ParsedStream;
+  }
+
+  function deduplicator(
+    overrides: Record<string, unknown> = {}
+  ): StreamDeduplicator {
+    return new StreamDeduplicator({
+      deduplicator: {
+        enabled: true,
+        keys: ['infoHash'],
+        multiGroupBehaviour: 'aggressive',
+        cached: 'single_result',
+        uncached: 'single_result',
+        p2p: 'single_result',
+        ...overrides,
+      },
+      presets: presets.map((instanceId) => ({ instanceId })),
+      services: [
+        { id: 'realdebrid', enabled: true },
+        { id: 'torbox', enabled: true },
+      ],
+    } as unknown as UserData);
+  }
+
+  const rd = (cached: boolean, cacheShared?: boolean) => ({
+    id: 'realdebrid',
+    cached,
+    cacheShared,
+  });
+  const tb = (cached: boolean, cacheShared?: boolean) => ({
+    id: 'torbox',
+    cached,
+    cacheShared,
+  });
+
+  it('lists every addon in the group once, own addon first, own cache only', async () => {
+    const streams = [
+      torrent('torrentio', 'abc', rd(true)),
+      torrent('torrentio', 'abc', tb(false)),
+      torrent('comet', 'abc', tb(false)),
+      torrent('mediafusion', 'abc', tb(true)),
+      torrent('mediafusion', 'abc', rd(true)),
+      torrent('jacred', 'abc', tb(true)),
+      torrent('jacred', 'abc', rd(true, true)),
+    ];
+    const results = await deduplicator().deduplicate(streams);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].addon.name, 'JacRed');
+    assert.equal(results[0].service?.id, 'realdebrid');
+    assert.deepEqual(
+      results[0].dedupSources?.map(({ addon, cached }) => ({ addon, cached })),
+      [
+        { addon: 'JacRed', cached: ['torbox'] },
+        // Comet's uncached copy was dropped by the aggressive mode.
+        { addon: 'Comet', cached: [] },
+        { addon: 'MediaFusion', cached: ['realdebrid', 'torbox'] },
+        { addon: 'Torrentio', cached: ['realdebrid'] },
+      ]
+    );
+  });
+
+  it('puts the stream own addon first when another addon is earlier', async () => {
+    const results = await deduplicator().deduplicate([
+      torrent('jacred', 'abc', tb(true)),
+      torrent('mediafusion', 'abc', rd(true)),
+    ]);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].addon.name, 'MediaFusion');
+    assert.deepEqual(
+      results[0].dedupSources?.map((s) => s.addon),
+      ['MediaFusion', 'JacRed']
+    );
+  });
+
+  it('gives each kept copy its own list', async () => {
+    const results = await deduplicator({
+      excludeAddons: ['jacred'],
+    }).deduplicate([
+      torrent('jacred', 'abc', tb(true)),
+      torrent('mediafusion', 'abc', rd(true)),
+    ]);
+    assert.equal(results.length, 2);
+    const byAddon = Object.fromEntries(
+      results.map((s) => [s.addon.name, s.dedupSources?.map((x) => x.addon)])
+    );
+    assert.deepEqual(byAddon, {
+      JacRed: ['JacRed', 'MediaFusion'],
+      MediaFusion: ['MediaFusion', 'JacRed'],
+    });
+  });
+
+  it('keeps sources recorded by an earlier dedup pass', async () => {
+    const first = await deduplicator().deduplicate([
+      torrent('mediafusion', 'abc', rd(true)),
+      torrent('torrentio', 'abc', rd(true)),
+    ]);
+    const second = await deduplicator().deduplicate([
+      ...first,
+      torrent('jacred', 'abc', tb(false)),
+    ]);
+    assert.equal(second.length, 1);
+    assert.deepEqual(
+      second[0].dedupSources?.map(({ addon, cached }) => ({ addon, cached })),
+      [
+        { addon: 'MediaFusion', cached: ['realdebrid'] },
+        { addon: 'JacRed', cached: [] },
+        { addon: 'Torrentio', cached: ['realdebrid'] },
+      ]
+    );
+  });
+
+  it('skips streams without an infoHash and copies of other torrents', async () => {
+    const http = {
+      ...torrent('comet', undefined),
+      type: 'http',
+      filename: 'Movie.mkv',
+    } as ParsedStream;
+    const other = { ...torrent('torrentio', 'def'), filename: 'Movie.mkv' };
+    const own = { ...torrent('jacred', 'abc'), filename: 'Movie.mkv' };
+    const results = await deduplicator({
+      keys: ['filename'],
+      p2p: 'disabled',
+      http: 'disabled',
+    }).deduplicate([own, other, http]);
+    assert.equal(results.length, 3);
+    assert.deepEqual(
+      own.dedupSources?.map((s) => s.addon),
+      ['JacRed']
+    );
+    assert.deepEqual(
+      other.dedupSources?.map((s) => s.addon),
+      ['Torrentio']
+    );
+    assert.equal(http.dedupSources, undefined);
+  });
+
+  it('keeps a raised copy without a fileIdx apart when the torrent has several files', async () => {
+    // Which file the -1 copy plays is unknown, so it is not grouped with
+    // either known file and lists only its own addon, without own cache.
+    const streams = [
+      torrent('mediafusion', 'abc', rd(true), 1),
+      torrent('torrentio', 'abc', rd(true), 2),
+      torrent('jacred', 'abc', rd(false), -1),
+    ];
+    shareCacheStatus(streams);
+    const results = await deduplicator().deduplicate(streams);
+    assert.deepEqual(
+      results.map((s) => ({
+        addon: s.addon.name,
+        service: s.service,
+        sources: s.dedupSources?.map(({ addon, cached }) => ({
+          addon,
+          cached,
+        })),
+      })),
+      [
+        {
+          addon: 'MediaFusion',
+          service: { id: 'realdebrid', cached: true, cacheShared: undefined },
+          sources: [{ addon: 'MediaFusion', cached: ['realdebrid'] }],
+        },
+        {
+          addon: 'Torrentio',
+          service: { id: 'realdebrid', cached: true, cacheShared: undefined },
+          sources: [{ addon: 'Torrentio', cached: ['realdebrid'] }],
+        },
+        {
+          addon: 'JacRed',
+          service: { id: 'realdebrid', cached: true, cacheShared: true },
+          sources: [{ addon: 'JacRed', cached: [] }],
+        },
+      ]
+    );
+  });
+
+  it('groups copies whose infoHash differs in case into one full list', async () => {
+    const streams = [
+      torrent('jacred', 'ABCDEF', rd(false), -1),
+      torrent('mediafusion', 'abcdef', rd(true), 0),
+    ];
+    shareCacheStatus(streams);
+    const results = await deduplicator().deduplicate(streams);
+    assert.equal(results.length, 1);
+    assert.deepEqual(
+      results[0].dedupSources?.map(({ addon, cached }) => ({ addon, cached })),
+      [
+        { addon: 'JacRed', cached: [] },
+        { addon: 'MediaFusion', cached: ['realdebrid'] },
+      ]
+    );
+  });
+
+  it('adds nothing when dedup is disabled', async () => {
+    const stream = torrent('jacred', 'abc', tb(true));
+    await deduplicator({ enabled: false }).deduplicate([stream]);
+    assert.equal(stream.dedupSources, undefined);
   });
 });
