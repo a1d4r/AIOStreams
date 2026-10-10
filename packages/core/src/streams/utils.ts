@@ -46,6 +46,33 @@ export function isServiceWrapEligibleP2PStream(
   return !!stream.torrent?.infoHash && isPresetInScope;
 }
 
+/**
+ * Addons check debrid cache availability in different ways, so copies of one
+ * torrent on the same service can disagree. If any copy is cached on a service,
+ * mark every copy of that infoHash on that service as cached. Runs before
+ * filtering so uncached exclusion and dedup see the shared status.
+ */
+export function shareCacheStatus(streams: ParsedStream[]): void {
+  const keyOf = (stream: ParsedStream) =>
+    stream.type === 'debrid' && stream.service && stream.torrent?.infoHash
+      ? `${stream.service.id}:${stream.torrent.infoHash.toLowerCase()}`
+      : undefined;
+
+  const cachedKeys = new Set<string>();
+  for (const stream of streams) {
+    const key = keyOf(stream);
+    if (key && stream.service?.cached) cachedKeys.add(key);
+  }
+  if (cachedKeys.size === 0) return;
+
+  for (const stream of streams) {
+    const key = keyOf(stream);
+    if (key && stream.service && cachedKeys.has(key)) {
+      stream.service.cached = true;
+    }
+  }
+}
+
 class StreamUtils {
   public static createDownloadableStream(stream: ParsedStream): ParsedStream {
     const copy = structuredClone(stream);
