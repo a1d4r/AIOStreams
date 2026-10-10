@@ -284,6 +284,33 @@ describe('shareFileInfo', () => {
     assert.equal(recipient.folderSize, undefined);
   });
 
+  it('leaves a copy named after a video file as it is', () => {
+    const episode = 'Hra.o.trony.S01E01.mkv';
+    const recipient = makeCopy('abc', undefined, {
+      filename: episode,
+      size: 2.9 * GB,
+    });
+    const indexedRecipient = makeCopy('def', -1, {
+      filename: episode,
+      size: 2.9 * GB,
+    });
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', undefined, {
+        filename: 'Rod.S01E01.mkv',
+        size: 1.1 * GB,
+      }),
+      indexedRecipient,
+      makeCopy('def', 0, { filename: 'Rod.S01E01.mkv', size: 1.1 * GB }),
+    ]);
+    for (const stream of [recipient, indexedRecipient]) {
+      assert.equal(stream.filename, episode);
+      assert.equal(stream.size, 2.9 * GB);
+      assert.equal(stream.folderSize, undefined);
+    }
+    assert.equal(indexedRecipient.torrent?.fileIdx, -1);
+  });
+
   it('ignores copies without a fileIdx when a copy knows the file', () => {
     const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
     shareFileInfo([
