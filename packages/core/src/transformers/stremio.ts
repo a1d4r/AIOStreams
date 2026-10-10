@@ -150,6 +150,10 @@ export class StremioTransformer {
             regexScore: stream.regexScore,
             rankedRegexesMatched: stream.rankedRegexesMatched,
             seadex: stream.seadex,
+            sources: stream.dedupSources?.map(({ addon, cached }) => ({
+              addon,
+              cached,
+            })),
             id: stream.id,
           }
         : undefined,
