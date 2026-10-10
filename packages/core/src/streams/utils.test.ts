@@ -201,6 +201,86 @@ describe('shareFileInfo', () => {
     assert.equal(recipient.torrent?.fileIdx, -1);
   });
 
+  it('takes the smallest known file, skipping one as large as the torrent', () => {
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 325 * GB });
+    const packSized = makeCopy('abc', 0, { filename: FILE, size: 325 * GB });
+    shareFileInfo([
+      recipient,
+      packSized,
+      makeCopy('abc', 0, { filename: FILE, size: 34 * GB }),
+      makeCopy('abc', undefined, { filename: 'Other.mkv', size: 34 * GB }),
+    ]);
+    assert.equal(recipient.filename, FILE);
+    assert.equal(recipient.size, 34 * GB);
+    assert.equal(recipient.folderSize, 325 * GB);
+    assert.equal(recipient.torrent?.fileIdx, 0);
+    assert.equal(packSized.size, 325 * GB);
+  });
+
+  it('takes the file copies without a fileIdx agree on, leaving it unknown', () => {
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
+    const p2p = makeCopy('abc', -1, { filename: PACK, size: 311 * GB }, 'p2p');
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', undefined, { filename: FILE, size: 32.7 * GB }),
+      makeCopy('abc', null, {
+        filename: ` ${FILE.toUpperCase()} `,
+        size: 32.6 * GB,
+      }),
+      makeCopy('abc', -1, { filename: FILE, size: 32.8 * GB }),
+      p2p,
+    ]);
+    assert.equal(recipient.size, 32.6 * GB);
+    assert.equal(recipient.folderSize, 311 * GB);
+    assert.equal(recipient.folderName, PACK);
+    assert.equal(recipient.torrent?.fileIdx, -1);
+    assert.equal(p2p.size, 311 * GB);
+  });
+
+  it('falls back to copies without a fileIdx when the known file is the torrent', () => {
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', 0, { filename: FILE, size: 311 * GB }),
+      makeCopy('abc', undefined, { filename: FILE, size: 32.7 * GB }),
+    ]);
+    assert.equal(recipient.size, 32.7 * GB);
+    assert.equal(recipient.torrent?.fileIdx, -1);
+  });
+
+  it('changes nothing when copies without a fileIdx disagree', () => {
+    for (const other of [
+      { filename: 'Game.of.Thrones.S01E02.mkv', size: 32.7 * GB },
+      { filename: FILE, size: 33.1 * GB },
+    ]) {
+      const recipient = makeCopy('abc', -1, {
+        filename: PACK,
+        size: 311 * GB,
+      });
+      shareFileInfo([
+        recipient,
+        makeCopy('abc', undefined, { filename: FILE, size: 32.7 * GB }),
+        makeCopy('abc', undefined, other),
+      ]);
+      assert.equal(recipient.filename, PACK);
+      assert.equal(recipient.size, 311 * GB);
+      assert.equal(recipient.folderSize, undefined);
+    }
+  });
+
+  it('ignores copies without a fileIdx when a copy knows the file', () => {
+    const recipient = makeCopy('abc', -1, { filename: PACK, size: 311 * GB });
+    shareFileInfo([
+      recipient,
+      makeCopy('abc', undefined, { filename: 'Other.mkv', size: 10 * GB }),
+      makeCopy('abc', 3, { filename: FILE, size: 32.7 * GB }),
+      makeCopy('abc', undefined, { filename: FILE, size: 20 * GB }),
+    ]);
+    assert.equal(recipient.filename, FILE);
+    assert.equal(recipient.size, 32.7 * GB);
+    assert.equal(recipient.torrent?.fileIdx, 3);
+  });
+
   it('leaves p2p copies and other torrents alone', () => {
     const p2p = makeCopy('abc', -1, { filename: PACK, size: 2000 * GB }, 'p2p');
     const other = makeCopy('def', -1, { filename: PACK, size: 2000 * GB });
