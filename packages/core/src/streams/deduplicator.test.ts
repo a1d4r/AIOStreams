@@ -144,6 +144,14 @@ describe('deduplicate by infoHash', () => {
     assert.equal(results.length, 2);
   });
 
+  it('compares infoHashes case-insensitively', async () => {
+    const results = await dedupByInfoHash([
+      makeTorrentStream(HASH.toUpperCase(), -1),
+      makeTorrentStream(HASH, 0),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
   it('does not group different torrents', async () => {
     const results = await dedupByInfoHash([
       makeTorrentStream(HASH, 12),
