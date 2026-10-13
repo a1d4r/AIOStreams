@@ -32,6 +32,7 @@ COPY packages/crypto/package*.json ./packages/crypto/
 COPY pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY pnpm-lock.yaml ./pnpm-lock.yaml
 COPY patches ./patches
+COPY vendor ./vendor
 
 # Install dependencies.
 RUN pnpm install --frozen-lockfile
@@ -74,6 +75,7 @@ COPY --from=builder /build/package*.json /build/LICENSE ./
 COPY --from=builder /build/pnpm-workspace.yaml ./pnpm-workspace.yaml
 COPY --from=builder /build/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=builder /build/patches ./patches
+COPY --from=builder /build/vendor ./vendor
 
 COPY --from=builder /build/packages/core/package.*json ./packages/core/
 COPY --from=builder /build/packages/server/package.*json ./packages/server/
