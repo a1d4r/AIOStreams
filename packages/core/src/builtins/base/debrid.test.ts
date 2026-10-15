@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import '../../index.js';
 import { BaseDebridAddon, type SearchMetadata } from './debrid.js';
 import StreamParser from '../../parser/streams.js';
+import { BuiltinStreamParser } from '../../presets/builtin.js';
+import type { Addon } from '../../db/schemas.js';
 import type { Stream, ParsedStream } from '../../db/schemas.js';
 import type {
   TorrentWithSelectedFile,
@@ -80,6 +82,58 @@ describe('BaseDebridAddon seeder metadata', () => {
         file: { index: 0, name: 'Test.1080p.WEB-DL.mkv', size: 1024 },
       },
       undefined
+    );
+  });
+});
+
+describe('BaseDebridAddon P2P streams', () => {
+  before(async () => {
+    mock.method(SettingsRepository, 'getAll', async () => []);
+    mock.method(SettingsRepository, 'getVersion', async () => 0);
+    await settingsStore.initialise();
+  });
+
+  const builtinParser = new BuiltinStreamParser({} as Addon) as unknown as {
+    getStreamType: (
+      stream: Stream,
+      service: ParsedStream['service'],
+      parsed: ParsedStream
+    ) => ParsedStream['type'];
+  };
+  const torrent: TorrentWithSelectedFile = {
+    ...makeTorrent(),
+    sources: ['udp://tracker.example:80/announce'],
+    file: { name: 'Test.1080p.WEB-DL', size: 1024 },
+  };
+
+  it('returns a torrent without a service as a P2P stream', () => {
+    const stream = addon._createStream(torrent, 'tt0000001', {});
+    assert.equal(stream.url, undefined);
+    assert.equal(stream.infoHash, torrent.hash);
+    assert.equal(stream.fileIdx, undefined);
+    assert.deepEqual(stream.sources, torrent.sources);
+    assert.match(stream.name ?? '', /^\[P2P\] Test /);
+    assert.equal(
+      builtinParser.getStreamType(stream, undefined, {} as ParsedStream),
+      'p2p'
+    );
+  });
+
+  it('keeps a debrid stream without sources', () => {
+    const stream = addon._createStream(
+      {
+        ...torrent,
+        service: { id: 'torbox', cached: true, library: false },
+      },
+      'tt0000001',
+      { torbox: 'auth' }
+    );
+    assert.ok(stream.url);
+    assert.equal(stream.sources, undefined);
+    assert.match(stream.name ?? '', /^\[TB ⚡\] Test /);
+    assert.equal(
+      builtinParser.getStreamType(stream, undefined, {} as ParsedStream),
+      'debrid'
     );
   });
 });
