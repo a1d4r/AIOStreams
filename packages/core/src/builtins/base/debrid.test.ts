@@ -111,12 +111,35 @@ describe('BaseDebridAddon P2P streams', () => {
     assert.equal(stream.url, undefined);
     assert.equal(stream.infoHash, torrent.hash);
     assert.equal(stream.fileIdx, undefined);
-    assert.deepEqual(stream.sources, torrent.sources);
+    assert.deepEqual(stream.sources, [
+      'tracker:udp://tracker.example:80/announce',
+      `dht:${torrent.hash}`,
+    ]);
     assert.match(stream.name ?? '', /^\[P2P\] Test /);
     assert.equal(
       builtinParser.getStreamType(stream, undefined, {} as ParsedStream),
       'p2p'
     );
+  });
+
+  it('lists each P2P source once, in order', () => {
+    const stream = addon._createStream(
+      {
+        ...torrent,
+        sources: [
+          'udp://tracker.example:80/announce',
+          'udp://other.example:80/announce',
+          'udp://tracker.example:80/announce',
+        ],
+      },
+      'tt0000001',
+      {}
+    );
+    assert.deepEqual(stream.sources, [
+      'tracker:udp://tracker.example:80/announce',
+      'tracker:udp://other.example:80/announce',
+      `dht:${torrent.hash}`,
+    ]);
   });
 
   it('keeps a debrid stream without sources', () => {
