@@ -491,29 +491,33 @@ export async function processTorrentsForP2P(
   const results: TorrentWithSelectedFile[] = [];
 
   // Parse only torrent titles and perform validation checks
-  const torrentTitles = torrents.map((torrent) => torrent.title ?? '');
-  const parsedTitles: ParsedResult[] = torrentTitles.map((title) =>
-    parseTorrentTitleCached(title)
-  );
   const parsedTitlesMap = new Map<string, ParsedResult>();
-  for (const [index, result] of parsedTitles.entries()) {
-    parsedTitlesMap.set(torrentTitles[index], result);
+  for (const torrent of torrents) {
+    const key = torrent.title ?? '';
+    if (!parsedTitlesMap.has(key)) {
+      parsedTitlesMap.set(key, parseTorrentTitleCached(key));
+    }
   }
+  const normTitles: Set<string> | null = metadata?.titles?.length
+    ? new Set(metadata.titles.map(normaliseTitle))
+    : null;
 
   // Filter torrents that pass validation checks
-  const validTorrents: { torrent: Torrent; parsedTitle: ParsedResult }[] = [];
+  const validTorrents: Torrent[] = [];
   for (const torrent of torrents) {
     const parsedTorrent = parsedTitlesMap.get(torrent.title ?? '');
-    if (metadata && parsedTorrent) {
-      if (isCountryWrong(parsedTorrent, metadata)) {
-        continue;
-      }
-      if (isSeasonWrong(parsedTorrent, metadata)) {
-        continue;
-      }
-      if (isEpisodeWrong(parsedTorrent, metadata)) {
-        continue;
-      }
+    if (
+      metadata &&
+      parsedTorrent &&
+      getValidationFailureReason(
+        torrent.title,
+        parsedTorrent,
+        metadata,
+        torrent.confirmed,
+        normTitles
+      )
+    ) {
+      continue;
     }
     if (hasTooManySelectableFiles(torrent.files)) {
       logger.debug(`Skipping torrent with too many files to select from`, {
@@ -522,26 +526,26 @@ export async function processTorrentsForP2P(
       });
       continue;
     }
-    validTorrents.push({ torrent, parsedTitle: parsedTorrent! });
+    validTorrents.push(torrent);
   }
 
   // Parse files only for valid torrents
   const allFileStrings: string[] = [];
-  for (const { torrent } of validTorrents) {
-    if (torrent.files && Array.isArray(torrent.files)) {
-      for (const file of torrent.files) {
-        if (isNotVideoFile(file)) continue;
-        allFileStrings.push(file.name ?? '');
-      }
+  for (const torrent of validTorrents) {
+    for (const file of torrent.files ?? []) {
+      if (isNotVideoFile(file)) continue;
+      allFileStrings.push(file.name ?? '');
     }
   }
 
   const parsedFiles = await parseFileNames(allFileStrings);
+  for (const [title, parsed] of parsedTitlesMap.entries()) {
+    parsedFiles.set(title, parsed);
+  }
 
-  for (const { torrent } of validTorrents) {
-    let file: DebridFile | undefined;
-
-    file = torrent.files
+  for (const torrent of validTorrents) {
+    // Without a file list (a magnet only) the client picks the file itself.
+    const file: DebridFile | undefined = torrent.files?.length
       ? await selectFileInTorrentOrNZB(
           torrent,
           {
@@ -556,9 +560,10 @@ export async function processTorrentsForP2P(
           metadata,
           {
             useLevenshteinMatching: false,
+            skipSeasonEpisodeCheck: torrent.confirmed,
           }
         )
-      : undefined;
+      : { name: torrent.title, size: torrent.size };
 
     if (file) {
       results.push({

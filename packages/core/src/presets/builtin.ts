@@ -208,9 +208,9 @@ export class BuiltinStreamParser extends StreamParser {
     service: ParsedStream['service'],
     currentParsedStream: ParsedStream
   ): ParsedStream['type'] {
-    return stream.type === 'torrent'
-      ? 'debrid'
-      : (stream.type as 'usenet' | 'stremio-usenet');
+    // A torrent without a playback URL is a P2P result.
+    if (stream.type === 'torrent') return stream.url ? 'debrid' : 'p2p';
+    return stream.type as 'usenet' | 'stremio-usenet';
   }
 
   protected getReleaseGroup(
