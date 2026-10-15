@@ -40,6 +40,7 @@ import {
 } from '../../debrid/index.js';
 import {
   processTorrents,
+  processTorrentsForP2P,
   processNZBs,
   filterUnprocessedTorrentsPreDownload,
 } from '../utils/debrid.js';
@@ -314,8 +315,10 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
 
     const torrentServices = this.getTorrentServices();
     const nzbServices = this.getNzbServices();
+    // Without any service, torrents are returned as P2P streams.
+    const p2p = this.userData.services.length === 0;
 
-    if (torrentServices.length === 0 && torrentResults.length > 0) {
+    if (!p2p && torrentServices.length === 0 && torrentResults.length > 0) {
       errorStreams.push(
         this._createErrorStream({
           title: `${this.name}`,
@@ -343,14 +346,19 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
     }
 
     const [processedTorrents, processedNzbs] = await Promise.all([
-      processTorrents(
-        torrentResults as Torrent[],
-        torrentServices,
-        id,
-        searchMetadata,
-        this.clientIp,
-        this.userData.checkOwned
-      ),
+      p2p
+        ? processTorrentsForP2P(
+            torrentResults as Torrent[],
+            searchMetadata
+          ).then((results) => ({ results, errors: [] }))
+        : processTorrents(
+            torrentResults as Torrent[],
+            torrentServices,
+            id,
+            searchMetadata,
+            this.clientIp,
+            this.userData.checkOwned
+          ),
       processNZBs(
         nzbResults,
         nzbServices.concat(
@@ -940,7 +948,7 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
       : '';
     const isFreeleech = torrentOrNzb?.downloadvolumefactor === 0;
 
-    const name = `${torrentOrNzb.service?.library ? '🗃️ ' : ''}${isPrivate ? '🔑 ' : ''}[${shortCode} ${cacheIndicator}] ${this.name} ${isFreeleech ? 'FREELEECH' : ''} `;
+    const name = `${torrentOrNzb.service?.library ? '🗃️ ' : ''}${isPrivate ? '🔑 ' : ''}[${[shortCode, cacheIndicator].filter(Boolean).join(' ')}] ${this.name} ${isFreeleech ? 'FREELEECH' : ''} `;
     const description = `${torrentOrNzb.title ? torrentOrNzb.title : ''}\n${torrentOrNzb.file.name ? torrentOrNzb.file.name : ''}\n${
       torrentOrNzb.indexer ? `🔍 ${torrentOrNzb.indexer}` : ''
     } ${'seeders' in torrentOrNzb && typeof torrentOrNzb.seeders === 'number' ? `👤 ${torrentOrNzb.seeders}` : ''} ${
@@ -976,6 +984,11 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
       age: torrentOrNzb.age,
       infoHash: torrentOrNzb.type === 'torrent' ? torrentOrNzb.hash : undefined,
       fileIdx: torrentOrNzb.file.index,
+      // A P2P client finds peers through the torrent's trackers.
+      sources:
+        torrentOrNzb.type === 'torrent' && !torrentOrNzb.service
+          ? torrentOrNzb.sources
+          : undefined,
       behaviorHints: {
         videoSize: torrentOrNzb.file.size,
         filename: torrentOrNzb.file.name,

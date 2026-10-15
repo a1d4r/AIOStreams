@@ -178,10 +178,12 @@ export class TorznabPreset extends BuiltinAddonPreset {
       TIMEOUT: appConfig.presets.defaultTimeout,
       USER_AGENT: appConfig.http.defaultUserAgent,
       SUPPORTED_SERVICES: StremThruPreset.supportedServices,
-      DESCRIPTION: 'An addon to get debrid results from a Torznab endpoint.',
+      DESCRIPTION:
+        'An addon to get debrid results from a Torznab endpoint, or P2P results without a service.',
       OPTIONS: options,
       SUPPORTED_STREAM_TYPES: [
         constants.DEBRID_STREAM_TYPE,
+        constants.P2P_STREAM_TYPE,
       ] as constants.StreamType[],
       SUPPORTED_RESOURCES: supportedResources,
       BUILTIN: true,
@@ -197,7 +199,11 @@ export class TorznabPreset extends BuiltinAddonPreset {
       options.services,
       options.name
     );
-    if (!usableServices || usableServices.length === 0) {
+    // Without a service only a preset that declares P2P returns P2P results.
+    if (
+      !usableServices?.length &&
+      !this.METADATA.SUPPORTED_STREAM_TYPES.includes(constants.P2P_STREAM_TYPE)
+    ) {
       throw new Error(
         `${this.METADATA.NAME} requires at least one usable service, but none were found. Please enable at least one of the following services: ${this.METADATA.SUPPORTED_SERVICES.join(
           ', '
@@ -220,7 +226,11 @@ export class TorznabPreset extends BuiltinAddonPreset {
     // prettier-ignore
     return querySearchValues.flatMap(forceQuerySearch => {
       const modifiedOptions = { ...options, forceQuerySearch };
-      
+
+      // Without a service the addon returns P2P results.
+      if (!usableServices?.length) {
+        return [this.generateAddon(userData, modifiedOptions, [])];
+      }
       return options.useMultipleInstances
         ? usableServices.map(service => this.generateAddon(userData, modifiedOptions, [service.id]))
         : [this.generateAddon(userData, modifiedOptions, usableServices.map(service => service.id))];
@@ -235,14 +245,18 @@ export class TorznabPreset extends BuiltinAddonPreset {
     return {
       name: options.name || this.METADATA.NAME,
       manifestUrl: this.generateManifestUrl(userData, services, options),
-      identifier: (services.length > 1
-        ? 'multi'
-        : constants.SERVICE_DETAILS[services[0]].shortName
+      identifier: (services.length === 0
+        ? 'p2p'
+        : services.length > 1
+          ? 'multi'
+          : constants.SERVICE_DETAILS[services[0]].shortName
       ).concat(options.forceQuerySearch ? '_Q' : ''),
-      displayIdentifier: services
-        .map((id) => constants.SERVICE_DETAILS[id].shortName)
-        .join(' | ')
-        .concat(options.forceQuerySearch ? ' (Q)' : ''),
+      displayIdentifier: (services.length === 0
+        ? 'P2P'
+        : services
+            .map((id) => constants.SERVICE_DETAILS[id].shortName)
+            .join(' | ')
+      ).concat(options.forceQuerySearch ? ' (Q)' : ''),
       enabled: true,
       library: options.libraryAddon ?? false,
       resources: options.resources || undefined,

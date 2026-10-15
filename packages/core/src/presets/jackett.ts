@@ -128,7 +128,10 @@ export class JackettPreset extends TorznabPreset {
       SUPPORTED_SERVICES: StremThruPreset.supportedServices,
       DESCRIPTION: 'An addon to get debrid results from a Jackett instance.',
       OPTIONS: options,
-      SUPPORTED_STREAM_TYPES: [constants.DEBRID_STREAM_TYPE],
+      SUPPORTED_STREAM_TYPES: [
+        constants.DEBRID_STREAM_TYPE,
+        constants.P2P_STREAM_TYPE,
+      ],
       SUPPORTED_RESOURCES: supportedResources,
       BUILTIN: true,
     };
