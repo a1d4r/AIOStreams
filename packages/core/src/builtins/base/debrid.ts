@@ -984,10 +984,16 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
       age: torrentOrNzb.age,
       infoHash: torrentOrNzb.type === 'torrent' ? torrentOrNzb.hash : undefined,
       fileIdx: torrentOrNzb.file.index,
-      // A P2P client finds peers through the torrent's trackers.
+      // A P2P client finds peers through the torrent's trackers and DHT,
+      // in Stremio's `tracker:<url>` / `dht:<infoHash>` form.
       sources:
         torrentOrNzb.type === 'torrent' && !torrentOrNzb.service
-          ? torrentOrNzb.sources
+          ? [
+              ...new Set([
+                ...torrentOrNzb.sources.map((url) => `tracker:${url}`),
+                `dht:${torrentOrNzb.hash}`,
+              ]),
+            ]
           : undefined,
       behaviorHints: {
         videoSize: torrentOrNzb.file.size,
