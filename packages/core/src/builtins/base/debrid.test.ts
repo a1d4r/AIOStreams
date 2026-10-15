@@ -216,4 +216,86 @@ describe('BaseDebridAddon title language queries', () => {
   it('falls back to the primary title for a language with no title', () => {
     assert.deepEqual(queries('sr'), ['pokemon detective pikachu 2019']);
   });
+
+  const setLatinOnly = async (value: boolean) => {
+    mock.method(SettingsRepository, 'getAll', async () => [
+      {
+        key: 'builtins.scrape.latinQueriesOnly',
+        value: JSON.stringify(value),
+        updated_at: new Date(),
+        updated_by: null,
+      },
+    ]);
+    await settingsStore.reload({ emit: false });
+  };
+
+  it('takes a native-script title tagged with the language before a shared one', async () => {
+    // The ru/uk shared Cyrillic title comes before the uk-only one.
+    const titles = deduplicateTitles([
+      { title: 'Pokémon Detective Pikachu', language: 'en' },
+      { title: 'Покемон: Детектив Пикачу', language: 'ru' },
+      { title: 'Покемон: Детектив Пикачу', language: 'uk' },
+      { title: 'Покемон: Детектив Пікачу', language: 'uk' },
+    ]);
+    await setLatinOnly(false);
+    assert.deepEqual(
+      queryBuilder.buildQueries(
+        { mediaType: 'movie' } as ParsedId,
+        {
+          ...metadata,
+          titles: titles.map((t) => t.title),
+          titlesWithLang: titles,
+        },
+        { titleLanguages: ['uk'] }
+      ),
+      ['покемон детектив пікачу 2019']
+    );
+    await setLatinOnly(true);
+  });
+
+  describe('a romanisation tagged with the original language', () => {
+    // Merge order: the primary and IMDb's title come first, untagged; TMDB's
+    // RU alternative "Brat 2" (a transliteration) then tags IMDb's copy ru.
+    const brat2 = deduplicateTitles(
+      [
+        { title: 'Brother 2' },
+        { title: 'Brat 2' },
+        { title: 'Брат 2', language: 'ru', trusted: true },
+        { title: 'Brat 2', language: 'ru', trusted: true },
+        { title: 'Brother 2', language: 'en', trusted: true },
+      ],
+      'ru'
+    );
+    const brat2Metadata = {
+      primaryTitle: 'brother 2',
+      titles: brat2.map((t) => t.title),
+      titlesWithLang: brat2,
+      originalLanguage: 'ru',
+      year: 2000,
+    } as SearchMetadata;
+    const brat2Queries = (spec: string) =>
+      queryBuilder.buildQueries(
+        { mediaType: 'movie' } as ParsedId,
+        brat2Metadata,
+        {
+          titleLanguages: ['default', spec],
+        }
+      );
+    it('keeps the first tagged title while queries are Latin-only', async () => {
+      await setLatinOnly(true);
+      assert.deepEqual(brat2Queries('ru'), ['brother 2 2000', 'brat 2 2000']);
+    });
+
+    it('takes the native-script title once non-Latin queries are allowed', async () => {
+      await setLatinOnly(false);
+      assert.deepEqual(brat2Queries('ru'), ['brother 2 2000', 'брат 2 2000']);
+      assert.deepEqual(brat2Queries('original'), [
+        'brother 2 2000',
+        'брат 2 2000',
+      ]);
+      // a Latin-script language is unaffected
+      assert.deepEqual(brat2Queries('en'), ['brother 2 2000']);
+      await setLatinOnly(true);
+    });
+  });
 });

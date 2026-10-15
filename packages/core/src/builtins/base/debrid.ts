@@ -85,12 +85,24 @@ export interface SearchMetadata extends TitleMetadata {
 /**
  * First title tagged with the language, else the first title the language
  * shares with others (deduplication drops the tag of a shared title).
+ *
+ * With `preferNonLatin`, a non-Latin-script title in the language wins over
+ * a romanisation: TMDB files transliterations ("Brat 2") under the country's
+ * language, and IMDb's identical title, merged ahead of the native one,
+ * inherits that tag.
  */
 function findTitleInLanguage(
   titles: MetadataTitle[] | undefined,
-  language: string
+  language: string,
+  preferNonLatin = false
 ): MetadataTitle | undefined {
+  const isNative = (t: MetadataTitle) => !isPredominantlyLatin(t.title);
+  const native = preferNonLatin
+    ? (titles?.find((t) => t.language === language && isNative(t)) ??
+      titles?.find((t) => t.languages?.includes(language) && isNative(t)))
+    : undefined;
   return (
+    native ??
     titles?.find((t) => t.language === language) ??
     titles?.find((t) => t.languages?.includes(language))
   );
@@ -532,6 +544,8 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
 
     if (titleLangs && titleLangs.length > 0) {
       const selected = new Set<string>();
+      // native-script queries are wanted only when they are not dropped below
+      const preferNonLatin = !appConfig.builtins.scrape.latinQueriesOnly;
       for (const spec of titleLangs) {
         if (spec === 'default') {
           selected.add(metadata.primaryTitle);
@@ -545,7 +559,8 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
           const match = metadata.originalLanguage
             ? findTitleInLanguage(
                 metadata.titlesWithLang,
-                metadata.originalLanguage
+                metadata.originalLanguage,
+                preferNonLatin
               )
             : undefined;
           if (match)
@@ -556,7 +571,11 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
             .forEach((title) => selected.add(cleanTitle(title)));
         } else {
           // take only the first matching title.
-          const match = findTitleInLanguage(metadata.titlesWithLang, spec);
+          const match = findTitleInLanguage(
+            metadata.titlesWithLang,
+            spec,
+            preferNonLatin
+          );
           if (match) selected.add(cleanTitle(match.title, spec));
         }
       }
