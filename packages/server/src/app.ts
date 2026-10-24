@@ -11,6 +11,7 @@ import {
   debridApi,
   searchApi,
   animeApi,
+  segmentsApi,
   proxyApi,
   templatesApi,
   syncApi,
@@ -145,6 +146,7 @@ apiRouter.use(
   searchApi
 );
 apiRouter.use('/anime', animeApi);
+apiRouter.use('/segments', segmentsApi);
 apiRouter.use('/proxy', proxyApi);
 apiRouter.use('/templates', templatesApi);
 apiRouter.use('/sync', syncApiRateLimiter, syncApi);
