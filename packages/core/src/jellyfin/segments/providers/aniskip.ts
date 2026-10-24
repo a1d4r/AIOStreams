@@ -139,6 +139,7 @@ export const aniSkipProvider: SegmentProvider = {
   kinds: ['episode'],
   idKeys: ['mal'],
   lengthAware: true,
+  matchesRelease: true,
 
   supports(lookup) {
     return (
@@ -173,6 +174,8 @@ export const aniSkipProvider: SegmentProvider = {
         provider: 'aniskip',
         ...(typeof released === 'number' &&
           released > 0 && { releaseMs: released * 1000 }),
+        // The server only returned submissions within ±20 s of the file.
+        ...(length?.exact && { matchesFile: true }),
       });
     }
     return out;
