@@ -8,6 +8,7 @@ import type {
   SegmentProvider,
   SegmentType,
 } from '../types.js';
+import { lengthOf } from '../length.js';
 
 interface AnimeSkipTimestamp {
   at?: number;
@@ -133,8 +134,9 @@ function pickEpisode(
   const pool = seasonMatched.length ? seasonMatched : candidates;
 
   const score = (ep: AnimeSkipEpisode): number => {
-    if (lookup.runtimeMs && ep.baseDuration) {
-      return Math.abs(ep.baseDuration * 1000 - lookup.runtimeMs);
+    const length = lengthOf(lookup);
+    if (length && ep.baseDuration) {
+      return Math.abs(ep.baseDuration * 1000 - length);
     }
     return Number.MAX_SAFE_INTEGER - (ep.timestamps?.length ?? 0);
   };
@@ -172,6 +174,7 @@ export const animeSkipProvider: SegmentProvider = {
   defaultBaseUrl: 'https://api.anime-skip.com',
   kinds: ['episode'],
   idKeys: ['anilist'],
+  lengthAware: true,
 
   configured(ctx) {
     return !!ctx.animeSkipClientId;

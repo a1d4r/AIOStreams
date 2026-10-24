@@ -28,6 +28,12 @@ export interface SegmentLookup {
   episode?: number;
   /** Rejects and clamps entries that cannot fit this cut. Absent until an item has been resolved. */
   runtimeMs?: number;
+  /**
+   * The played file's measured length. A listed runtime is whole minutes and
+   * fits every release; this tells one release from another, so providers
+   * that match releases ask for this one and it takes over from `runtimeMs`.
+   */
+  durationMs?: number;
   /** TMDB season/episode candidates, best first. Absent: `season`/`episode` already are; empty: none known. */
   tmdbEpisodes?: { season: number; episode: number }[];
   /** The id space `season`/`episode` are numbered in: the stated id's. Set once ids are resolved. */
@@ -66,6 +72,8 @@ export interface SegmentProvider {
   readonly idKeys: readonly SegmentIdKey[];
   /** What it covers before any ids are resolved, which `supports` cannot answer. */
   readonly kinds: readonly SegmentLookup['kind'][];
+  /** Its answer depends on the length asked about, which then goes into its cache key. */
+  readonly lengthAware?: boolean;
   /** Absent means it needs no credentials. */
   configured?(ctx: ProviderContext): boolean;
   /** The credential a configuration can supply when the instance has none. */

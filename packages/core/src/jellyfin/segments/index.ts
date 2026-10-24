@@ -14,6 +14,7 @@ import { createLogger } from '../../logging/logger.js';
 import type { ContentDescriptor } from '../types.js';
 import { SEGMENT_PROVIDER_REGISTRY } from './providers/index.js';
 import { entryEpisode, needsVideos, type ShowVideo } from './anime-episode.js';
+import { askedLength, lengthOf } from './length.js';
 import type {
   ProviderContext,
   Segment,
@@ -316,10 +317,18 @@ export function lookupFor(
   };
 }
 
-/** Never on the item id, so one episode reached through two catalogs is one lookup. */
-function cacheKey(id: SegmentProviderId, lookup: SegmentLookup) {
+/**
+ * Never on the item id, so one episode reached through two catalogs is one
+ * lookup. A provider that matches releases answers per length, so the length
+ * it was asked about is part of its key.
+ */
+export function cacheKey(id: SegmentProviderId, lookup: SegmentLookup) {
   const ids = ID_TYPES.map(([key]) => lookup.ids[key] ?? '').join('|');
-  return `${KEY_VERSION}|${id}|${lookup.kind}|${ids}|${lookup.season ?? ''}|${lookup.episode ?? ''}`;
+  const length = SEGMENT_PROVIDER_REGISTRY[id].lengthAware
+    ? askedLength(lookup)
+    : undefined;
+  const lengthKey = length ? `${length.exact ? 'f' : 'r'}${length.ms}` : '';
+  return `${KEY_VERSION}|${id}|${lookup.kind}|${ids}|${lookup.season ?? ''}|${lookup.episode ?? ''}|${lengthKey}`;
 }
 
 /**
@@ -484,7 +493,7 @@ export async function segmentsFor(
     if (types?.length) {
       await new Promise<void>((resolve) => {
         const check = () => {
-          if (decided(types, providers, results, settled, lookup.runtimeMs))
+          if (decided(types, providers, results, settled, lengthOf(lookup)))
             resolve();
         };
         check();
@@ -496,5 +505,5 @@ export async function segmentsFor(
     }
   }
 
-  return merge(results, providers, lookup.runtimeMs);
+  return merge(results, providers, lengthOf(lookup));
 }
