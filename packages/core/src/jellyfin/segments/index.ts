@@ -14,7 +14,8 @@ import { createLogger } from '../../logging/logger.js';
 import type { ContentDescriptor } from '../types.js';
 import { SEGMENT_PROVIDER_REGISTRY } from './providers/index.js';
 import { entryEpisode, needsVideos, type ShowVideo } from './anime-episode.js';
-import { askedLength, lengthOf } from './length.js';
+import { askedLength } from './length.js';
+import { plausible, sanitise } from './select.js';
 import type {
   ProviderContext,
   Segment,
@@ -44,9 +45,6 @@ const ID_TYPES: [SegmentIdKey, IdType][] = [
 const ANIME_KEYS = new Set<SegmentIdKey>(['mal', 'kitsu', 'anilist', 'anidb']);
 
 const cache = Cache.getInstance<string, Segment[]>('jellyfin-segments', 40_000);
-
-/** Below this a client will not offer a skip anyway, so it is noise. */
-const MIN_SEGMENT_MS = 1000;
 
 /** Bumped when a provider changes what it returns, so old answers retire. */
 const KEY_VERSION = 'v3';
@@ -332,45 +330,37 @@ export function cacheKey(id: SegmentProviderId, lookup: SegmentLookup) {
 }
 
 /**
- * Timestamps are submitted per title while a file is one particular release, and
- * clients decide for themselves whether to auto-skip, so rejecting what cannot
- * fit the runtime is the only guard there is.
+ * The first marker of a type, in the operator's order, that sits where that
+ * type can; credits must also start after `introEndMs`.
  */
-function sanitise(segments: Segment[], runtimeMs?: number): Segment[] {
-  const out: Segment[] = [];
-  for (const segment of segments) {
-    const startMs = Math.round(segment.startMs);
-    // An open end is Infinity, which the Redis and SQL caches store as null.
-    let endMs = segment.endMs == null ? Infinity : Math.round(segment.endMs);
-    if (!Number.isFinite(startMs) || startMs < 0) continue;
-    if (!Number.isFinite(endMs)) {
-      // An open end means it runs to the end of the file.
-      if (!runtimeMs) continue;
-      endMs = runtimeMs;
+function pick(
+  type: SegmentType,
+  ids: SegmentProviderId[],
+  results: Map<SegmentProviderId, Segment[]>,
+  lookup: SegmentLookup,
+  introEndMs?: number
+): Segment | undefined {
+  for (const id of ids) {
+    for (const segment of sanitise(results.get(id) ?? [], lookup)) {
+      if (segment.type === type && plausible(segment, lookup, introEndMs))
+        return segment;
     }
-    if (runtimeMs) {
-      if (startMs >= runtimeMs) continue;
-      endMs = Math.min(endMs, runtimeMs);
-    }
-    if (endMs - startMs < MIN_SEGMENT_MS) continue;
-    out.push({ ...segment, startMs, endMs });
   }
-  return out;
+  return undefined;
 }
 
 /** First provider in the operator's order with a usable entry for a type wins it. */
 function merge(
   results: Map<SegmentProviderId, Segment[]>,
   providers: SegmentProviderId[],
-  runtimeMs?: number
+  lookup: SegmentLookup
 ): Segment[] {
-  const chosen = new Map<SegmentType, Segment>();
-  for (const id of providers) {
-    for (const segment of sanitise(results.get(id) ?? [], runtimeMs)) {
-      if (!chosen.has(segment.type)) chosen.set(segment.type, segment);
-    }
-  }
-  return [...chosen.values()].sort((a, b) => a.startMs - b.startMs);
+  const intro = pick('Intro', providers, results, lookup);
+  const recap = pick('Recap', providers, results, lookup);
+  const outro = pick('Outro', providers, results, lookup, intro?.endMs);
+  return [intro, recap, outro]
+    .filter((s): s is Segment => !!s)
+    .sort((a, b) => a.startMs - b.startMs);
 }
 
 function providersFor(
@@ -392,25 +382,30 @@ export function couldHaveSegments(
 
 /**
  * A type is decided once the first provider in order that has it has answered,
- * or once every provider has answered without it.
+ * or once every provider has answered without it. Credits depend on the
+ * opening chosen, so they wait for it too.
  */
 function decided(
   types: SegmentType[],
   providers: SegmentProviderId[],
   results: Map<SegmentProviderId, Segment[]>,
   settled: Set<SegmentProviderId>,
-  runtimeMs?: number
+  lookup: SegmentLookup
 ): boolean {
-  return types.every((type) => {
+  const wanted = new Set(types);
+  if (wanted.has('Outro')) wanted.add('Intro');
+  const isDecided = (type: SegmentType, introEndMs?: number) => {
     for (const id of providers) {
       if (!settled.has(id)) return false;
-      if (
-        sanitise(results.get(id) ?? [], runtimeMs).some((s) => s.type === type)
-      )
-        return true;
+      if (pick(type, [id], results, lookup, introEndMs)) return true;
     }
     return true;
-  });
+  };
+  if (![...wanted].every((type) => type === 'Outro' || isDecided(type)))
+    return false;
+  if (!wanted.has('Outro')) return true;
+  const intro = pick('Intro', providers, results, lookup);
+  return isDecided('Outro', intro?.endMs);
 }
 
 /**
@@ -493,8 +488,7 @@ export async function segmentsFor(
     if (types?.length) {
       await new Promise<void>((resolve) => {
         const check = () => {
-          if (decided(types, providers, results, settled, lengthOf(lookup)))
-            resolve();
+          if (decided(types, providers, results, settled, lookup)) resolve();
         };
         check();
         for (const fetch of fetches) void fetch.then(check);
@@ -505,5 +499,5 @@ export async function segmentsFor(
     }
   }
 
-  return merge(results, providers, lengthOf(lookup));
+  return merge(results, providers, lookup);
 }
