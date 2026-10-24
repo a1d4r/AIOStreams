@@ -38,6 +38,13 @@ const EPISODE_FIELDS: [Field, SegmentType][] = [
   ['credits', 'Outro'],
 ];
 
+/**
+ * The cluster it picks can be any release within five minutes; only one this
+ * close to the file is the same cut (encodes of one release differ by
+ * seconds, cuts by half a minute or more).
+ */
+const SAME_RELEASE_MS = 30_000;
+
 /** As with IntroDB: a movie's "intro" rows are studio logos, not an opening to skip. */
 const MOVIE_FIELDS: [Field, SegmentType][] = [['credits', 'Outro']];
 
@@ -212,6 +219,7 @@ export const theIntroDbProvider: SegmentProvider = {
   kinds: ['episode', 'movie'],
   idKeys: ['imdb'],
   lengthAware: true,
+  matchesRelease: true,
 
   supports(lookup) {
     if (!idParam(lookup)) return false;
@@ -267,6 +275,10 @@ export const theIntroDbProvider: SegmentProvider = {
     const group = body?.group_duration_ms;
     const releaseMs =
       typeof group === 'number' && group > 0 ? group : undefined;
+    const matchesFile =
+      !!length?.exact &&
+      !!releaseMs &&
+      Math.abs(releaseMs - length.ms) <= SAME_RELEASE_MS;
 
     const out: Segment[] = [];
     for (const [field, type] of movie ? MOVIE_FIELDS : EPISODE_FIELDS) {
@@ -296,6 +308,7 @@ export const theIntroDbProvider: SegmentProvider = {
           endMs,
           provider: 'theintrodb',
           ...(releaseMs && { releaseMs }),
+          ...(matchesFile && { matchesFile }),
         });
       }
     }

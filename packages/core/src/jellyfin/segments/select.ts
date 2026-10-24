@@ -1,5 +1,6 @@
+import type { SegmentProviderId } from '../../utils/constants.js';
 import { lengthOf } from './length.js';
-import type { Segment, SegmentLookup } from './types.js';
+import type { Segment, SegmentLookup, SegmentType } from './types.js';
 
 /**
  * At or below this a marker is noise rather than a segment: IntroDB accepts
@@ -86,4 +87,83 @@ export function plausible(
     return !lengthMs || segment.endMs <= lengthMs * HALF;
   if (introEndMs !== undefined && segment.startMs < introEndMs) return false;
   return segment.startMs >= (lengthMs ? lengthMs * HALF : MIN_OUTRO_START_MS);
+}
+
+/**
+ * Lower is better. A marker timed on the file's own release beats any that is
+ * not, whatever the order, because releases of one episode put the same
+ * opening up to two minutes apart; between two of the same kind the
+ * operator's order decides. Only markers that sit where their type can are
+ * ranked, so a misplaced one never wins by matching the file.
+ */
+function rankOf(
+  matched: boolean,
+  id: SegmentProviderId,
+  providers: SegmentProviderId[]
+): number {
+  return (matched ? 0 : providers.length) + providers.indexOf(id);
+}
+
+function bestOf(
+  type: SegmentType,
+  ids: Iterable<SegmentProviderId>,
+  results: Map<SegmentProviderId, Segment[]>,
+  providers: SegmentProviderId[],
+  lookup: SegmentLookup,
+  introEndMs?: number
+): { segment: Segment; rank: number } | undefined {
+  let best: { segment: Segment; rank: number } | undefined;
+  for (const id of ids) {
+    for (const segment of sanitise(results.get(id) ?? [], lookup)) {
+      if (segment.type !== type) continue;
+      if (!plausible(segment, lookup, introEndMs)) continue;
+      const rank = rankOf(!!segment.matchesFile, id, providers);
+      if (!best || rank < best.rank) best = { segment, rank };
+    }
+  }
+  return best;
+}
+
+/** One marker per type, the best ranked; credits after the opening chosen. */
+export function merge(
+  results: Map<SegmentProviderId, Segment[]>,
+  providers: SegmentProviderId[],
+  lookup: SegmentLookup
+): Segment[] {
+  const best = (type: SegmentType, introEndMs?: number) =>
+    bestOf(type, providers, results, providers, lookup, introEndMs)?.segment;
+  const intro = best('Intro');
+  return [intro, best('Recap'), best('Outro', intro?.endMs)]
+    .filter((s): s is Segment => !!s)
+    .sort((a, b) => a.startMs - b.startMs);
+}
+
+/**
+ * A type is decided once no provider still answering could outrank what has
+ * arrived: one earlier in order, or one in `matching` (able to match the
+ * file's release) against a marker that does not. Credits depend on the
+ * opening chosen, so they wait for it to be decided too.
+ */
+export function decided(
+  types: SegmentType[],
+  providers: SegmentProviderId[],
+  results: Map<SegmentProviderId, Segment[]>,
+  settled: Set<SegmentProviderId>,
+  lookup: SegmentLookup,
+  matching: Set<SegmentProviderId>
+): boolean {
+  const isDecided = (type: SegmentType, introEndMs?: number) => {
+    const best = bestOf(type, settled, results, providers, lookup, introEndMs);
+    return providers.every(
+      (id) =>
+        settled.has(id) ||
+        (!!best && rankOf(matching.has(id), id, providers) > best.rank)
+    );
+  };
+  const wantsOutro = types.includes('Outro');
+  if (wantsOutro && !isDecided('Intro')) return false;
+  if (!types.every((type) => type === 'Outro' || isDecided(type))) return false;
+  if (!wantsOutro) return true;
+  const intro = bestOf('Intro', settled, results, providers, lookup);
+  return isDecided('Outro', intro?.segment.endMs);
 }

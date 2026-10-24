@@ -15,7 +15,7 @@ import type { ContentDescriptor } from '../types.js';
 import { SEGMENT_PROVIDER_REGISTRY } from './providers/index.js';
 import { entryEpisode, needsVideos, type ShowVideo } from './anime-episode.js';
 import { askedLength } from './length.js';
-import { plausible, sanitise } from './select.js';
+import { decided, merge } from './select.js';
 import type {
   ProviderContext,
   Segment,
@@ -329,40 +329,6 @@ export function cacheKey(id: SegmentProviderId, lookup: SegmentLookup) {
   return `${KEY_VERSION}|${id}|${lookup.kind}|${ids}|${lookup.season ?? ''}|${lookup.episode ?? ''}|${lengthKey}`;
 }
 
-/**
- * The first marker of a type, in the operator's order, that sits where that
- * type can; credits must also start after `introEndMs`.
- */
-function pick(
-  type: SegmentType,
-  ids: SegmentProviderId[],
-  results: Map<SegmentProviderId, Segment[]>,
-  lookup: SegmentLookup,
-  introEndMs?: number
-): Segment | undefined {
-  for (const id of ids) {
-    for (const segment of sanitise(results.get(id) ?? [], lookup)) {
-      if (segment.type === type && plausible(segment, lookup, introEndMs))
-        return segment;
-    }
-  }
-  return undefined;
-}
-
-/** First provider in the operator's order with a usable entry for a type wins it. */
-function merge(
-  results: Map<SegmentProviderId, Segment[]>,
-  providers: SegmentProviderId[],
-  lookup: SegmentLookup
-): Segment[] {
-  const intro = pick('Intro', providers, results, lookup);
-  const recap = pick('Recap', providers, results, lookup);
-  const outro = pick('Outro', providers, results, lookup, intro?.endMs);
-  return [intro, recap, outro]
-    .filter((s): s is Segment => !!s)
-    .sort((a, b) => a.startMs - b.startMs);
-}
-
 function providersFor(
   lookup: SegmentLookup,
   credentials?: SegmentCredentials
@@ -381,34 +347,6 @@ export function couldHaveSegments(
 }
 
 /**
- * A type is decided once the first provider in order that has it has answered,
- * or once every provider has answered without it. Credits depend on the
- * opening chosen, so they wait for it too.
- */
-function decided(
-  types: SegmentType[],
-  providers: SegmentProviderId[],
-  results: Map<SegmentProviderId, Segment[]>,
-  settled: Set<SegmentProviderId>,
-  lookup: SegmentLookup
-): boolean {
-  const wanted = new Set(types);
-  if (wanted.has('Outro')) wanted.add('Intro');
-  const isDecided = (type: SegmentType, introEndMs?: number) => {
-    for (const id of providers) {
-      if (!settled.has(id)) return false;
-      if (pick(type, [id], results, lookup, introEndMs)) return true;
-    }
-    return true;
-  };
-  if (![...wanted].every((type) => type === 'Outro' || isDecided(type)))
-    return false;
-  if (!wanted.has('Outro')) return true;
-  const intro = pick('Intro', providers, results, lookup);
-  return isDecided('Outro', intro?.endMs);
-}
-
-/**
  * With `types`, answers as soon as those are decided; slower providers keep
  * running and fill the cache for the next lookup.
  */
@@ -419,6 +357,12 @@ export async function segmentsFor(
 ): Promise<Segment[]> {
   const providers = providersFor(lookup, credentials);
   if (!providers.length) return [];
+  // Only these can still turn up a marker timed on the file's own release.
+  const matching = new Set(
+    askedLength(lookup)?.exact
+      ? providers.filter((id) => SEGMENT_PROVIDER_REGISTRY[id].matchesRelease)
+      : []
+  );
 
   // Keys come from the stated ids, before filling adds any.
   const keys = new Map(providers.map((id) => [id, cacheKey(id, lookup)]));
@@ -488,7 +432,8 @@ export async function segmentsFor(
     if (types?.length) {
       await new Promise<void>((resolve) => {
         const check = () => {
-          if (decided(types, providers, results, settled, lookup)) resolve();
+          if (decided(types, providers, results, settled, lookup, matching))
+            resolve();
         };
         check();
         for (const fetch of fetches) void fetch.then(check);
