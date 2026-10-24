@@ -6,7 +6,7 @@ import { AnimeDatabase } from '../../anime-database/index.js';
 import { AnimeType, type AnimeEntry } from '../../anime-database/types.js';
 import { IdMappingDataset } from '../../metadata/id-mappings.js';
 import { IMDBMetadata } from '../../metadata/imdb.js';
-import { fillIds } from './index.js';
+import { cacheKey, fillIds } from './index.js';
 import type { SegmentLookup } from './types.js';
 
 // One Piece on IMDb: one MAL entry counted on through every IMDb season.
@@ -109,5 +109,43 @@ describe('fillIds', () => {
     await resolution.animeEpisode;
     assert.equal(resolution.idsFailed, false);
     assert.equal(resolution.animeEpisodeFailed, false);
+  });
+});
+
+describe('cacheKey', () => {
+  const episode: SegmentLookup = {
+    kind: 'episode',
+    ids: { imdb: 'tt0903747' },
+    season: 1,
+    episode: 1,
+  };
+
+  test('keys a length-aware provider per 10 s step of the length asked', () => {
+    const at = (durationMs?: number, runtimeMs?: number) =>
+      cacheKey('aniskip', { ...episode, durationMs, runtimeMs });
+    assert.equal(at(2839_000), at(2843_000));
+    assert.notEqual(at(2839_000), at(2846_000));
+    // A measured length and a listed runtime of the same value are asked differently.
+    assert.notEqual(at(2840_000), at(undefined, 2840_000));
+    assert.match(at(2839_000), /\|f2840000$/);
+    assert.match(at(), /\|$/);
+  });
+
+  test('keeps the length out of other providers keys', () => {
+    assert.equal(
+      cacheKey('introdb', { ...episode, durationMs: 2839_000 }),
+      cacheKey('introdb', episode)
+    );
+  });
+
+  test('keys by ids, never by which one was stated', () => {
+    assert.notEqual(
+      cacheKey('introdb', episode),
+      cacheKey('introdb', { ...episode, season: 2 })
+    );
+    assert.notEqual(
+      cacheKey('introdb', episode),
+      cacheKey('introdb', { ...episode, ids: { tmdb: '1396' } })
+    );
   });
 });

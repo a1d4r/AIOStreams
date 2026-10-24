@@ -8,6 +8,7 @@ import type {
   SegmentProvider,
   SegmentType,
 } from '../types.js';
+import { askedLength } from '../length.js';
 
 interface TheIntroDbSegment {
   start_ms?: number | null;
@@ -21,6 +22,12 @@ interface TheIntroDbResponse {
   intro?: TheIntroDbSegment[] | null;
   recap?: TheIntroDbSegment[] | null;
   credits?: TheIntroDbSegment[] | null;
+}
+
+/** A release cluster from `list_versions`; a length of 0 is "unknown". */
+interface TheIntroDbVersion {
+  duration_ms?: number | null;
+  submission_count?: number | null;
 }
 
 type Field = 'intro' | 'recap' | 'credits';
@@ -74,6 +81,24 @@ const DEFAULT_PAUSE_S = 60;
 const EXHAUSTED_PAUSE_S = 3600;
 const MAX_PAUSE_S = 86_400;
 
+/*
+ * Every 10 s step of a file's length is its own marker-cache key, so the
+ * provider keeps its own answers per episode: the list of releases, and the
+ * markers per release asked for. However many lengths an episode is played
+ * at, it costs one request for the list and one per release it lands in.
+ */
+const answers = Cache.getInstance<string, TheIntroDbResponse>(
+  'theintrodb-answers',
+  20_000
+);
+const versionLists = Cache.getInstance<string, TheIntroDbVersion[]>(
+  'theintrodb-versions',
+  20_000
+);
+
+/** The server's own window for matching a length to a release. */
+const VERSION_WINDOW_MS = 5 * 60_000;
+
 /** Seconds from now: a delta, or an epoch time in seconds. */
 function resetIn(value: string | null): number | undefined {
   const n = Number(value);
@@ -99,12 +124,86 @@ export function pauseFor(headers: Headers): number {
   return Math.min(Math.ceil(seconds), MAX_PAUSE_S);
 }
 
+/** One request; `undefined` for a 404 (`no_submissions`, `episode_not_found`). */
+async function ask<T>(
+  ctx: ProviderContext,
+  params: URLSearchParams
+): Promise<T | undefined> {
+  const until = await pause.get(PAUSE_KEY).catch(() => undefined);
+  if (until && until > Date.now())
+    throw new Error('TheIntroDB is rate limited, waiting for its reset');
+  const response = await makeRequest(
+    `${ctx.baseUrl.replace(/\/+$/, '')}/v4/media?${params}`,
+    {
+      timeout: ctx.timeoutMs,
+      headers: {
+        accept: 'application/json',
+        'user-agent': appConfig.http.defaultUserAgent,
+      },
+    }
+  );
+  if (response.status === 404) return undefined;
+  if (response.status === 429) {
+    const seconds = pauseFor(response.headers);
+    await pause
+      .set(PAUSE_KEY, Date.now() + seconds * 1000, seconds)
+      .catch(() => undefined);
+  }
+  // Anything else, a rate limit included, is thrown so it is not remembered
+  // as a miss.
+  if (!response.ok) throw new Error(`TheIntroDB answered ${response.status}`);
+  return (await response.json()) as T;
+}
+
+/** Answers, misses included, are kept as long as the marker cache keeps them. */
+async function cached<T extends object>(
+  store: Cache<string, T>,
+  key: string,
+  miss: T,
+  load: () => Promise<T | undefined>
+): Promise<T> {
+  const hit = await store.get(key).catch(() => undefined);
+  if (hit) return hit;
+  const answer = await load();
+  // An empty release list is a miss too: nothing submitted for any release.
+  const found = Array.isArray(answer) ? answer.length > 0 : !!answer;
+  const { ttl, negativeTtl } = appConfig.jellyfin.segments;
+  await store
+    .set(key, answer ?? miss, found ? ttl : negativeTtl)
+    .catch(() => undefined);
+  return answer ?? miss;
+}
+
+/** The known release closest to `lengthMs`, within the server's own window. */
+function closestVersion(
+  versions: TheIntroDbVersion[],
+  lengthMs: number
+): number | undefined {
+  let best: number | undefined;
+  for (const version of versions) {
+    const ms = version?.duration_ms;
+    if (typeof ms !== 'number' || ms <= 0) continue;
+    if (
+      best === undefined ||
+      Math.abs(ms - lengthMs) < Math.abs(best - lengthMs)
+    )
+      best = ms;
+  }
+  return best !== undefined && Math.abs(best - lengthMs) <= VERSION_WINDOW_MS
+    ? best
+    : undefined;
+}
+
 /**
  * TVDB-, TMDB- or IMDb-keyed, series and movies. Each type is a list, best
  * first here; `null` bounds mean the start or the end of the file, and `0–0`
- * is a vote that the episode has no such segment. Asked without a length, the
- * server answers for its most submitted release, so one lookup per episode
- * serves every runtime.
+ * is a vote that the episode has no such segment.
+ *
+ * Given a length, the release is chosen here from `list_versions` (which
+ * lists the releases' lengths but no markers) and asked for by its exact
+ * length, so answers are kept per release, not per length. Without one, or
+ * with no release within five minutes of it, the server answers for its most
+ * submitted release.
  */
 export const theIntroDbProvider: SegmentProvider = {
   id: 'theintrodb',
@@ -112,6 +211,7 @@ export const theIntroDbProvider: SegmentProvider = {
   defaultBaseUrl: 'https://api.theintrodb.org',
   kinds: ['episode', 'movie'],
   idKeys: ['imdb'],
+  lengthAware: true,
 
   supports(lookup) {
     if (!idParam(lookup)) return false;
@@ -129,30 +229,40 @@ export const theIntroDbProvider: SegmentProvider = {
       params.set('season', String(lookup.season));
       params.set('episode', String(lookup.episode));
     }
-    const until = await pause.get(PAUSE_KEY).catch(() => undefined);
-    if (until && until > Date.now())
-      throw new Error('TheIntroDB is rate limited, waiting for its reset');
-    const response = await makeRequest(
-      `${ctx.baseUrl.replace(/\/+$/, '')}/v4/media?${params}`,
-      {
-        timeout: ctx.timeoutMs,
-        headers: {
-          accept: 'application/json',
-          'user-agent': appConfig.http.defaultUserAgent,
-        },
+    const episodeKey = `${ctx.baseUrl}|${params}`;
+
+    const length = askedLength(lookup);
+    let release: number | undefined;
+    if (length) {
+      const versions = await cached(
+        versionLists,
+        `${episodeKey}|versions`,
+        [],
+        async () => {
+          const list = new URLSearchParams(params);
+          list.set('list_versions', 'true');
+          const body = await ask<{ versions?: TheIntroDbVersion[] }>(ctx, list);
+          return body
+            ? Array.isArray(body.versions)
+              ? body.versions
+              : []
+            : undefined;
+        }
+      );
+      // Nothing submitted for any release.
+      if (!versions.length) return [];
+      release = closestVersion(versions, length.ms);
+    }
+    const body = await cached(
+      answers,
+      `${episodeKey}|${release ?? 'top'}`,
+      {},
+      () => {
+        const one = new URLSearchParams(params);
+        if (release) one.set('duration_ms', String(release));
+        return ask<TheIntroDbResponse>(ctx, one);
       }
     );
-    // `no_submissions` and `episode_not_found`. Anything else, a rate limit
-    // included, is thrown so it is not remembered as a miss.
-    if (response.status === 404) return [];
-    if (response.status === 429) {
-      const seconds = pauseFor(response.headers);
-      await pause
-        .set(PAUSE_KEY, Date.now() + seconds * 1000, seconds)
-        .catch(() => undefined);
-    }
-    if (!response.ok) throw new Error(`TheIntroDB answered ${response.status}`);
-    const body = (await response.json()) as TheIntroDbResponse;
 
     const out: Segment[] = [];
     for (const [field, type] of movie ? MOVIE_FIELDS : EPISODE_FIELDS) {

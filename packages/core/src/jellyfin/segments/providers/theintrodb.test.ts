@@ -1,12 +1,13 @@
 import { describe, test, mock, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from 'undici';
-import { settingsStore } from '../../../config/index.js';
+import { config, settingsStore } from '../../../config/index.js';
 import { SettingsRepository } from '../../../db/repositories/settings.js';
 import type { ProviderContext, SegmentLookup } from '../types.js';
 // Through the registry, which settles the import cycle with the core barrel.
 import { theIntroDbProvider } from './index.js';
 import { pauseFor } from './theintrodb.js';
+import { Cache } from '../../../utils/cache.js';
 
 const BASE = 'https://theintrodb.test';
 const ctx: ProviderContext = {
@@ -93,10 +94,7 @@ describe('theIntroDbProvider', () => {
         preview: [{ start_ms: 3490000, end_ms: 3500000 }],
       });
 
-    const segments = await theIntroDbProvider.fetch(
-      { ...episode, runtimeMs: 3480000 },
-      ctx
-    );
+    const segments = await theIntroDbProvider.fetch(episode, ctx);
     assert.deepEqual(
       segments.map((s) => [s.type, s.startMs, s.endMs]),
       [
@@ -141,6 +139,94 @@ describe('theIntroDbProvider', () => {
       segments.map((s) => s.type),
       ['Outro']
     );
+  });
+
+  test('asks once per release, however many lengths it is played at', async (t) => {
+    const agent = await mockApi(t);
+    const pool = agent.get(BASE);
+    const asked: string[] = [];
+    pool
+      .intercept({ path: /imdb_id=tt0388629\b/ })
+      .reply((req) => {
+        const url = new URL(req.path, BASE);
+        asked.push(url.search);
+        if (url.searchParams.get('list_versions'))
+          return {
+            statusCode: 200,
+            data: {
+              versions: [
+                { duration_ms: 0, submission_count: 2 },
+                { duration_ms: 1476000, submission_count: 2 },
+                { duration_ms: 1542000, submission_count: 1 },
+              ],
+            },
+          };
+        const release = Number(url.searchParams.get('duration_ms') ?? 1476000);
+        return {
+          statusCode: 200,
+          data: {
+            group_duration_ms: release,
+            intro: [{ start_ms: release / 100, end_ms: release / 10 }],
+          },
+        };
+      })
+      .persist();
+
+    const lengths = [1541, 1542.4, 1544, 1549, 1470, 1478, 1300, 900];
+    const intros = [];
+    for (const seconds of lengths) {
+      const [intro] = await theIntroDbProvider.fetch(
+        {
+          ...episode,
+          ids: { imdb: 'tt0388629' },
+          durationMs: seconds * 1000,
+        },
+        ctx
+      );
+      intros.push(intro?.startMs);
+    }
+    // The list, then 1542 s, 1476 s and the most submitted (none within 5 min of 900 s).
+    assert.equal(asked.length, 4);
+    assert.deepEqual(
+      intros,
+      [15420, 15420, 15420, 15420, 14760, 14760, 14760, 14760]
+    );
+  });
+
+  test('a release list miss is one request', async (t) => {
+    const agent = await mockApi(t);
+    let asked = 0;
+    agent
+      .get(BASE)
+      .intercept({ path: /imdb_id=tt5\b/ })
+      .reply(() => {
+        asked++;
+        return { statusCode: 404, data: { code: 'no_submissions' } };
+      })
+      .persist();
+    const lookup = { ...episode, ids: { imdb: 'tt5' }, durationMs: 1400000 };
+    assert.deepEqual(await theIntroDbProvider.fetch(lookup, ctx), []);
+    assert.deepEqual(
+      await theIntroDbProvider.fetch({ ...lookup, durationMs: 1500000 }, ctx),
+      []
+    );
+    assert.equal(asked, 1);
+  });
+
+  test('keeps an empty release list only as long as a miss', async (t) => {
+    const agent = await mockApi(t);
+    agent
+      .get(BASE)
+      .intercept({ path: /imdb_id=tt7\b.*list_versions=true/ })
+      .reply(200, { versions: [] });
+    const set = t.mock.method(Cache.getInstance('theintrodb-versions'), 'set');
+    const lookup = { ...episode, ids: { imdb: 'tt7' }, durationMs: 1400000 };
+    assert.deepEqual(await theIntroDbProvider.fetch(lookup, ctx), []);
+    assert.equal(set.mock.callCount(), 1);
+    const [, list, ttl] = set.mock.calls[0].arguments;
+    assert.deepEqual(list, []);
+    assert.equal(ttl, config.jellyfin.segments.negativeTtl);
+    assert.notEqual(ttl, config.jellyfin.segments.ttl);
   });
 
   // Last: the pause it sets holds for the rest of the process.
