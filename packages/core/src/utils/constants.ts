@@ -1608,7 +1608,13 @@ const RESOURCES = [
   WATCH_STATE_RESOURCE,
 ] as const;
 
-const SEGMENT_PROVIDERS = ['introdb', 'aniskip', 'animeskip', 'pmdb'] as const;
+const SEGMENT_PROVIDERS = [
+  'introdb',
+  'aniskip',
+  'animeskip',
+  'pmdb',
+  'theintrodb',
+] as const;
 
 export type SegmentProviderId = (typeof SEGMENT_PROVIDERS)[number];
 

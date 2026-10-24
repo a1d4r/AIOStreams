@@ -181,10 +181,10 @@ export const jellyfinSchema = {
     },
     providers: {
       schema: z.array(z.enum(constants.SEGMENT_PROVIDERS)),
-      default: ['introdb', 'aniskip', 'pmdb'] as string[],
+      default: ['introdb', 'aniskip', 'theintrodb', 'pmdb'] as string[],
       label: 'Segment providers',
       description:
-        'Which databases to ask, best first. They are all asked at once, and for each marker type the highest one on this list that has it wins. **introdb** is IMDb-keyed and covers every series, plus end credits for movies; **aniskip** is anime only and is the one provider that matches submissions against the real episode length; **animeskip** is anime only, needs a client id, and costs a whole-show fetch per episode; **pmdb** (PublicMetaDB) covers movies as well as series, and needs an API key from the instance or from each configuration, so it is skipped for a configuration that has neither.',
+        'Which databases to ask, best first. They are all asked at once, and for each marker type the highest one on this list that has it wins. **introdb** is IMDb-keyed and covers every series, plus end credits for movies; **aniskip** is anime only and is the one provider that matches submissions against the real episode length; **theintrodb** (TheIntroDB) covers series and movie end credits by TVDB, TMDB or IMDb id, asked once per episode for its most submitted release; without a key it allows 500 lookups a day per IP by its docs, which every user of the instance shares, so a busy public instance can run out (after a rate limit it is not asked until the limit resets); **animeskip** is anime only, needs a client id, and costs a whole-show fetch per episode; **pmdb** (PublicMetaDB) covers movies as well as series, and needs an API key from the instance or from each configuration, so it is skipped for a configuration that has neither.',
       env: 'JELLYFIN_SEGMENTS_PROVIDERS',
       requiresRestart: false,
       secret: false,
