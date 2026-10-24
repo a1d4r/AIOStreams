@@ -264,6 +264,10 @@ export const theIntroDbProvider: SegmentProvider = {
       }
     );
 
+    const group = body?.group_duration_ms;
+    const releaseMs =
+      typeof group === 'number' && group > 0 ? group : undefined;
+
     const out: Segment[] = [];
     for (const [field, type] of movie ? MOVIE_FIELDS : EPISODE_FIELDS) {
       const rows = Array.isArray(body?.[field]) ? body[field]! : [];
@@ -286,7 +290,13 @@ export const theIntroDbProvider: SegmentProvider = {
         )
           continue;
         if ((raw.submission_count ?? 0) < ctx.minSubmissions) continue;
-        out.push({ type, startMs, endMs, provider: 'theintrodb' });
+        out.push({
+          type,
+          startMs,
+          endMs,
+          provider: 'theintrodb',
+          ...(releaseMs && { releaseMs }),
+        });
       }
     }
     return out;
