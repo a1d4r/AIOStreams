@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import StreamDeduplicator from './deduplicator.js';
-import { shareCacheStatus, shareFileInfo } from './utils.js';
+import { shareCacheStatus, shareFileInfo, shareInfoHash } from './utils.js';
 import type { ParsedStream, UserData } from '../db/schemas.js';
 
 function makeStream(
@@ -851,5 +851,296 @@ describe('deduplicate sources', () => {
     const stream = torrent('jacred', 'abc', tb(true));
     await deduplicator({ enabled: false }).deduplicate([stream]);
     assert.equal(stream.dedupSources, undefined);
+  });
+});
+
+describe('deduplicate copies without an infoHash', () => {
+  // The Fellowship of the Ring (tt0120737): MediaFusion hides infoHashes
+  // since 6.2.0, so its copies of two releases came as rows of their own.
+  const TEAMHD =
+    'The.Lord.of.the.Rings.The.Fellowship.of.the.Ring.2001.2160p.DV.HDR.BluRay.Remux.TeamHD.mkv';
+  const TEAMHD_SIZE = 223946512868;
+  const TEAMHD_HASH = 'c668daf8c4b38f590d481b3c7e10d39acc207a87';
+  const UHD_TITLE =
+    'Властелин колец: Братство Кольца / The Lord of the Rings: The Fellowship of the Ring [2001 UHD BDRemux 2160p HDR10 Dolby Vision] [Extended Edition] Dub + 4x MVO + 5x AVO + Original (Eng) + Sub (Rus Eng)';
+  const UHD_FILE =
+    '1. Братство кольца (2001) UHD BDRemux UK 2160p HDR Dolby Vision Extended Edition от RuTracker - prodigy1201.mkv';
+  const UHD_HASH = 'b0e4e3cf00000000000000000000000000000000';
+
+  function copy(
+    addon: string,
+    infoHash: string | undefined,
+    service: { id: string; cached: boolean },
+    fields: Partial<ParsedStream> & { title?: string; fileIdx?: number }
+  ): ParsedStream {
+    const { title, fileIdx, ...rest } = fields;
+    return {
+      id: Math.random().toString(),
+      type: 'debrid',
+      service: { ...service },
+      torrent: { infoHash, title, fileIdx },
+      addon: {
+        instanceId: addon,
+        name: addon,
+        resultPassthrough: false,
+        preset: { id: addon },
+      },
+      ...rest,
+    } as unknown as ParsedStream;
+  }
+
+  const rd = (cached: boolean) => ({ id: 'realdebrid', cached });
+  const tb = (cached: boolean) => ({ id: 'torbox', cached });
+
+  function deduplicator(): StreamDeduplicator {
+    return new StreamDeduplicator({
+      deduplicator: {
+        enabled: true,
+        keys: ['infoHash'],
+        multiGroupBehaviour: 'aggressive',
+        cached: 'single_result',
+        uncached: 'single_result',
+        p2p: 'single_result',
+      },
+      presets: ['Comet', 'StremThru Torz', 'MediaFusion', 'Torrentio'].map(
+        (instanceId) => ({ instanceId })
+      ),
+      services: [
+        { id: 'realdebrid', enabled: true },
+        { id: 'torbox', enabled: true },
+      ],
+    } as unknown as UserData);
+  }
+
+  it('joins them with the copies of their torrent', async () => {
+    const streams = [
+      copy('Comet', TEAMHD_HASH, rd(false), {
+        filename: TEAMHD,
+        size: TEAMHD_SIZE,
+        title: TEAMHD,
+      }),
+      copy('Comet', TEAMHD_HASH, tb(true), {
+        filename: TEAMHD,
+        size: TEAMHD_SIZE,
+        title: TEAMHD,
+      }),
+      copy('StremThru Torz', TEAMHD_HASH, rd(false), {
+        filename: TEAMHD,
+        size: TEAMHD_SIZE,
+      }),
+      copy('MediaFusion', undefined, rd(true), {
+        filename: TEAMHD,
+        size: TEAMHD_SIZE,
+      }),
+      copy('MediaFusion', undefined, tb(true), {
+        filename: TEAMHD,
+        size: TEAMHD_SIZE,
+      }),
+      copy('Comet', UHD_HASH, rd(true), {
+        filename: UHD_FILE,
+        size: 193450314699,
+        title: UHD_FILE,
+      }),
+      copy('Torrentio', UHD_HASH, rd(true), {
+        filename: UHD_FILE,
+        size: 193445327012,
+        folderName: UHD_TITLE,
+        title: UHD_TITLE,
+        fileIdx: 0,
+      }),
+      copy('MediaFusion', undefined, rd(true), {
+        filename: UHD_TITLE,
+        size: 193450314699,
+      }),
+      copy('MediaFusion', undefined, tb(true), {
+        filename: UHD_TITLE,
+        size: 193450314699,
+      }),
+    ];
+    shareInfoHash(streams);
+    shareCacheStatus(streams);
+    shareFileInfo(streams);
+    const results = await deduplicator().deduplicate(streams);
+    assert.deepEqual(
+      results.map((s) => ({
+        addon: s.addon.name,
+        service: s.service?.id,
+        infoHash: s.torrent?.infoHash,
+        sources: s.dedupSources?.map(({ addon }) => addon),
+      })),
+      [
+        {
+          addon: 'Comet',
+          service: 'realdebrid',
+          infoHash: TEAMHD_HASH,
+          sources: ['Comet', 'StremThru Torz', 'MediaFusion'],
+        },
+        {
+          addon: 'Comet',
+          service: 'realdebrid',
+          infoHash: UHD_HASH,
+          sources: ['Comet', 'MediaFusion', 'Torrentio'],
+        },
+      ]
+    );
+  });
+  it("joins an addon's copies of one file on several services when no other copy has it", async () => {
+    const trilogy =
+      'Властелин колец: Трилогия / The Lord of the Rings: Trilogy (2001-2003) UHD BDRemux 2160p';
+    const streams = [
+      copy('MediaFusion', undefined, rd(true), {
+        filename: trilogy,
+        size: 84497308056,
+      }),
+      copy('MediaFusion', undefined, tb(true), {
+        filename: trilogy,
+        size: 84497308056,
+      }),
+      // Another file of the name, and another name.
+      copy('MediaFusion', undefined, tb(true), {
+        filename: trilogy,
+        size: 39609929798,
+      }),
+      copy('MediaFusion', undefined, tb(true), {
+        filename: TEAMHD,
+        size: 84497308056,
+      }),
+    ];
+    shareInfoHash(streams);
+    const results = await deduplicator().deduplicate(streams);
+    assert.deepEqual(
+      results.map((s) => [s.service?.id, s.filename, s.size]),
+      [
+        ['realdebrid', trilogy, 84497308056],
+        ['torbox', trilogy, 39609929798],
+        ['torbox', TEAMHD, 84497308056],
+      ]
+    );
+  });
+  // Versions of a TheEqualizer release (dovi.club UPD) keep its name.
+  const EQ = 'Iron.Man.2008.2160p.UHDRemux.HDR.DV-TheEqualizer.mkv';
+  const EQ_OLD = 62378309238;
+  const EQ_NEW = 62122145270;
+  const EQ_ROUNDED = 58 * 1024 ** 3;
+
+  async function dedup(streams: ParsedStream[]) {
+    shareInfoHash(streams);
+    shareCacheStatus(streams);
+    shareFileInfo(streams);
+    return (await deduplicator().deduplicate(streams)).map((s) => ({
+      addon: s.addon.name,
+      service: s.service?.id,
+      cached: s.service?.cached,
+      infoHash: s.torrent?.infoHash,
+      size: s.size,
+    }));
+  }
+
+  it('keeps versions of one name and different sizes apart', async () => {
+    const results = await dedup([
+      copy('Comet', 'aaa', rd(true), { filename: EQ, size: EQ_OLD }),
+      copy('Comet', 'bbb', rd(true), { filename: EQ, size: EQ_NEW }),
+      copy('MediaFusion', undefined, rd(true), { filename: EQ, size: EQ_NEW }),
+    ]);
+    assert.deepEqual(
+      results.map((r) => [r.infoHash, r.size]),
+      [
+        ['aaa', EQ_OLD],
+        ['bbb', EQ_NEW],
+      ]
+    );
+  });
+
+  it("joins a file of one name and byte size in two torrents, keeping MediaFusion's cached status", async () => {
+    // Thelma & Louise (tt0103074): one file in torrents 89a48659 and b8e0cc58.
+    const results = await dedup([
+      copy('Comet', '89a48659', rd(false), { filename: EQ, size: EQ_NEW }),
+      copy('MediaFusion', undefined, rd(true), { filename: EQ, size: EQ_NEW }),
+    ]);
+    assert.deepEqual(results, [
+      {
+        addon: 'Comet',
+        service: 'realdebrid',
+        cached: true,
+        infoHash: '89a48659',
+        size: EQ_NEW,
+      },
+    ]);
+  });
+
+  it('shows a version only MediaFusion has, with its cached status', async () => {
+    const results = await dedup([
+      copy('Comet', 'aaa', rd(false), { filename: EQ, size: EQ_OLD }),
+      copy('MediaFusion', undefined, rd(true), { filename: EQ, size: EQ_NEW }),
+      copy('MediaFusion', undefined, tb(true), { filename: EQ, size: EQ_NEW }),
+    ]);
+    assert.deepEqual(
+      results.map((r) => [r.addon, r.service, r.cached, r.infoHash, r.size]),
+      [
+        ['Comet', 'realdebrid', false, 'aaa', EQ_OLD],
+        ['MediaFusion', 'realdebrid', true, undefined, EQ_NEW],
+      ]
+    );
+  });
+
+  it('keeps versions MediaFusion alone has apart', async () => {
+    const exact = await dedup([
+      copy('MediaFusion', undefined, rd(true), { filename: EQ, size: EQ_OLD }),
+      copy('MediaFusion', undefined, rd(true), { filename: EQ, size: EQ_NEW }),
+    ]);
+    assert.equal(exact.length, 2);
+    // Rounded to one size, they can only be told apart by not joining them.
+    const rounded = await dedup([
+      copy('MediaFusion', undefined, rd(true), {
+        filename: EQ,
+        size: EQ_ROUNDED,
+      }),
+      copy('MediaFusion', undefined, rd(true), {
+        filename: EQ,
+        size: EQ_ROUNDED,
+      }),
+    ]);
+    assert.equal(rounded.length, 2);
+  });
+
+  it('keeps a copy apart from another release of the same rounded size', async () => {
+    // Terminator 2 (tt0103064): both are 29 GiB as Comet and MediaFusion
+    // round them.
+    const results = await dedup([
+      copy('Comet', 'd2021862', rd(true), {
+        filename:
+          'Terminator.2.Judgment.Day.1991.THEATRICAL.2160p.UHD.BluRay.REMUX.HDR.HEVC.DTS-HD.MA.5.1-Master5.mkv',
+        size: 29 * 1024 ** 3,
+      }),
+      copy('MediaFusion', undefined, rd(true), {
+        filename:
+          'Terminator 2: Judgment Day [1991, BDRemux 1080p] [French Transfer] Dub',
+        size: 29 * 1024 ** 3,
+      }),
+    ]);
+    assert.deepEqual(
+      results.map((r) => [r.addon, r.infoHash]),
+      [
+        ['Comet', 'd2021862'],
+        ['MediaFusion', undefined],
+      ]
+    );
+  });
+
+  it('joins a copy to a torrent by an exact size when no copy gives its name', async () => {
+    const results = await dedup([
+      copy('Comet', 'aaa', rd(false), {
+        filename: 'Iron.Man.2008.2160p.UHD.Remux.mkv',
+        size: EQ_NEW,
+      }),
+      copy('MediaFusion', undefined, rd(true), {
+        filename: 'Железный человек / Iron Man (2008) UHD BDRemux 2160p',
+        size: EQ_NEW,
+      }),
+    ]);
+    assert.deepEqual(
+      results.map((r) => [r.addon, r.cached, r.infoHash]),
+      [['Comet', true, 'aaa']]
+    );
   });
 });
