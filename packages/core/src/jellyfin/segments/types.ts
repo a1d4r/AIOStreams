@@ -9,17 +9,13 @@ export interface Segment {
   endMs: number;
   /** Which provider supplied it; carried for logging, not for clients. */
   provider: SegmentProviderId;
+  /** Length of the release the provider timed it on, when it says. */
+  releaseMs?: number;
 }
 
 /** Every id space a provider might key on. Keys are Stremio's spellings. */
 export type SegmentIdKey =
-  | 'imdb'
-  | 'tmdb'
-  | 'tvdb'
-  | 'mal'
-  | 'kitsu'
-  | 'anilist'
-  | 'anidb';
+  'imdb' | 'tmdb' | 'tvdb' | 'mal' | 'kitsu' | 'anilist' | 'anidb';
 
 export interface SegmentLookup {
   kind: 'movie' | 'episode';

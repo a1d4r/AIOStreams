@@ -165,11 +165,14 @@ export const aniSkipProvider: SegmentProvider = {
       const end = result?.interval?.endTime;
       if (!type || typeof start !== 'number' || typeof end !== 'number')
         continue;
+      const released = result.episodeLength;
       out.push({
         type,
         startMs: start * 1000,
         endMs: end * 1000,
         provider: 'aniskip',
+        ...(typeof released === 'number' &&
+          released > 0 && { releaseMs: released * 1000 }),
       });
     }
     return out;
