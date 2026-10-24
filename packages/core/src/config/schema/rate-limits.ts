@@ -106,6 +106,12 @@ export const rateLimitsSchema = {
     envPrefix: 'ANIME_API',
     label: 'anime API',
   }),
+  segmentsApi: rateLimit({
+    windowDefault: 60,
+    maxDefault: 120,
+    envPrefix: 'SEGMENTS_API',
+    label: 'segments API',
+  }),
   appReports: rateLimit({
     windowDefault: 3600,
     maxDefault: 10,
