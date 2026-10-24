@@ -200,6 +200,7 @@ export async function fillIds(
   const missing = () => [...needed].some((key) => !lookup.ids[key]);
   const stated = ID_TYPES.find(([key]) => lookup.ids[key]);
   if (!stated) return resolution;
+  lookup.numberedBy ??= stated[0];
   const statedId = lookup.ids[stated[0]] as string;
   const animeStated = ANIME_KEYS.has(stated[0]);
   const wantsTmdbNumbering =
@@ -330,7 +331,8 @@ function sanitise(segments: Segment[], runtimeMs?: number): Segment[] {
   const out: Segment[] = [];
   for (const segment of segments) {
     const startMs = Math.round(segment.startMs);
-    let endMs = Math.round(segment.endMs);
+    // An open end is Infinity, which the Redis and SQL caches store as null.
+    let endMs = segment.endMs == null ? Infinity : Math.round(segment.endMs);
     if (!Number.isFinite(startMs) || startMs < 0) continue;
     if (!Number.isFinite(endMs)) {
       // An open end means it runs to the end of the file.
