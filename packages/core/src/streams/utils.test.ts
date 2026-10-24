@@ -1,6 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { shareCacheStatus, shareFileInfo } from './utils.js';
+import {
+  isRoundSize,
+  shareCacheStatus,
+  shareFileInfo,
+  shareInfoHash,
+} from './utils.js';
 import type { ParsedStream } from '../db/schemas.js';
 
 function makeStream(
@@ -491,5 +496,240 @@ describe('shareFileInfo', () => {
     assert.equal(p2p.torrent?.fileIdx, -1);
     assert.equal(p2pFile.size, 2000 * GB);
     assert.equal(other.size, 2000 * GB);
+  });
+});
+
+describe('shareInfoHash', () => {
+  const TEAMHD =
+    'The.Lord.of.the.Rings.The.Fellowship.of.the.Ring.2001.2160p.DV.HDR.BluRay.Remux.TeamHD.mkv';
+  const TEAMHD_SIZE = 223946512868;
+
+  function copy(
+    infoHash: string | undefined,
+    fields: Partial<ParsedStream>,
+    service = { id: 'realdebrid', cached: true },
+    type: ParsedStream['type'] = 'debrid'
+  ): ParsedStream {
+    return Object.assign(makeStream(infoHash, service, type), fields);
+  }
+
+  it('gives a copy the infoHash of the torrent with its file name and size', () => {
+    const rd = copy(undefined, { filename: TEAMHD, size: TEAMHD_SIZE });
+    const tb = copy(
+      undefined,
+      { filename: TEAMHD, size: TEAMHD_SIZE },
+      { id: 'torbox', cached: true }
+    );
+    shareInfoHash([
+      copy('C668DAF8', { filename: TEAMHD, size: TEAMHD_SIZE }),
+      rd,
+      tb,
+    ]);
+    assert.equal(rd.torrent?.infoHash, 'c668daf8');
+    assert.equal(tb.torrent?.infoHash, 'c668daf8');
+  });
+
+  it("matches a copy named after the torrent by another copy's torrent title", () => {
+    const title =
+      'Властелин колец: Братство Кольца / The Lord of the Rings: The Fellowship of the Ring [2001 UHD BDRemux 2160p HDR10 Dolby Vision] [Extended Edition]';
+    const file = '1. Братство кольца (2001) UHD BDRemux UK 2160p.mkv';
+    const torrentio = copy('b0e4e3cf', {
+      filename: file,
+      size: 193445327012,
+      folderName: title,
+    });
+    torrentio.torrent!.title = title;
+    const mediaFusion = copy(undefined, {
+      filename: title,
+      size: 193450314699,
+    });
+    shareInfoHash([
+      torrentio,
+      copy('b0e4e3cf', { filename: file, size: 193450314699 }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, 'b0e4e3cf');
+  });
+
+  it('matches by a size counted to the byte alone when no copy gives the name', () => {
+    const mediaFusion = copy(undefined, {
+      filename: 'Some Title (2001) 4K.mkv',
+      size: 12717554815,
+    });
+    shareInfoHash([
+      copy('aaa', { filename: 'Other.Name.2001.mkv', size: 12717554815 }),
+      copy('bbb', { filename: 'Other.Name.2001.mkv', size: 12717554816 }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, 'aaa');
+  });
+
+  it("matches a torrent's size reported as a folder's", () => {
+    const mediaFusion = copy(undefined, {
+      filename: 'Show.S01E01.mkv',
+      size: 321234567891,
+    });
+    shareInfoHash([
+      copy('aaa', {
+        filename: 'Show.S01E01.mkv',
+        size: 4321234567,
+        folderSize: 321234567891,
+      }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, 'aaa');
+  });
+
+  it('leaves a copy whose file is in several torrents without one', () => {
+    const mediaFusion = copy(undefined, {
+      filename: TEAMHD,
+      size: TEAMHD_SIZE,
+    });
+    shareInfoHash([
+      copy('aaa', { filename: TEAMHD, size: TEAMHD_SIZE }),
+      copy('bbb', { filename: TEAMHD, size: TEAMHD_SIZE }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, undefined);
+  });
+
+  it('leaves a copy alone when its name and its size point to different torrents', () => {
+    const mediaFusion = copy(undefined, {
+      filename: TEAMHD,
+      size: TEAMHD_SIZE,
+    });
+    shareInfoHash([
+      copy('aaa', { filename: 'Another.Release.mkv', size: TEAMHD_SIZE }),
+      copy('bbb', { filename: TEAMHD, size: TEAMHD_SIZE - 1 }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, undefined);
+  });
+
+  it('leaves copies with an infoHash, p2p and copies without a service alone', () => {
+    const own = copy('own', { filename: TEAMHD, size: TEAMHD_SIZE });
+    const p2p = copy(
+      undefined,
+      { filename: TEAMHD, size: TEAMHD_SIZE },
+      undefined,
+      'p2p'
+    );
+    const http = makeStream(undefined, undefined, 'http');
+    Object.assign(http, { filename: TEAMHD, size: TEAMHD_SIZE });
+    shareInfoHash([
+      copy('aaa', { filename: TEAMHD, size: TEAMHD_SIZE }),
+      own,
+      p2p,
+      http,
+    ]);
+    assert.equal(own.torrent?.infoHash, 'own');
+    assert.equal(p2p.torrent?.infoHash, undefined);
+    assert.equal(http.torrent?.infoHash, undefined);
+  });
+  // Terminator 2 (tt0103064): Comet and MediaFusion round sizes to a GiB.
+  const T2_SIZE = 29 * 1024 ** 3;
+
+  it('does not match by a rounded size alone', () => {
+    const mediaFusion = copy(undefined, {
+      filename:
+        'Terminator 2: Judgment Day [1991, BDRemux 1080p] [French Transfer] Dub',
+      size: T2_SIZE,
+    });
+    shareInfoHash([
+      copy('d2021862', {
+        filename:
+          'Terminator.2.Judgment.Day.1991.THEATRICAL.2160p.UHD.BluRay.REMUX.HDR.HEVC.DTS-HD.MA.5.1-Master5.mkv',
+        size: T2_SIZE,
+      }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, undefined);
+  });
+
+  it('leaves a copy with a rounded size without one, even of its name', () => {
+    const name = 'Iron.Man.2008.2160p.UHDRemux.HDR.DV-TheEqualizer.mkv';
+    const mediaFusion = copy(undefined, {
+      filename: name,
+      size: 58 * 1024 ** 3,
+    });
+    shareInfoHash([
+      copy('aaa', { filename: name, size: 58 * 1024 ** 3 }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, undefined);
+  });
+
+  it('needs the file name and the size from one copy of the torrent', () => {
+    const mediaFusion = copy(undefined, {
+      filename: TEAMHD,
+      size: TEAMHD_SIZE,
+    });
+    shareInfoHash([
+      copy('aaa', { filename: TEAMHD, size: TEAMHD_SIZE - 123457 }),
+      copy('aaa', { filename: 'Extras.mkv', size: TEAMHD_SIZE }),
+      mediaFusion,
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, undefined);
+  });
+
+  it('takes back an infoHash a later call finds in another torrent too', () => {
+    const mediaFusion = copy(
+      undefined,
+      { filename: TEAMHD, size: TEAMHD_SIZE },
+      { id: 'realdebrid', cached: false }
+    );
+    const group = [
+      copy('aaa', { filename: TEAMHD, size: TEAMHD_SIZE }),
+      mediaFusion,
+    ];
+    shareInfoHash(group);
+    shareCacheStatus(group);
+    shareFileInfo(group);
+    assert.equal(mediaFusion.torrent?.infoHash, 'aaa');
+    assert.equal(mediaFusion.service?.cacheShared, true);
+    assert.ok(mediaFusion.torrentFile);
+
+    shareInfoHash([
+      ...group,
+      copy('bbb', { filename: TEAMHD, size: TEAMHD_SIZE }),
+    ]);
+    assert.equal(mediaFusion.torrent?.infoHash, undefined);
+    assert.equal(mediaFusion.torrentFile, undefined);
+    assert.equal(mediaFusion.service?.cached, false);
+    assert.equal(mediaFusion.service?.cacheShared, undefined);
+  });
+
+  it('keeps an infoHash when a later call has no torrent for the copy', () => {
+    const mediaFusion = copy(undefined, {
+      filename: TEAMHD,
+      size: TEAMHD_SIZE,
+    });
+    shareInfoHash([
+      copy('aaa', { filename: TEAMHD, size: TEAMHD_SIZE }),
+      mediaFusion,
+    ]);
+    shareInfoHash([mediaFusion]);
+    assert.equal(mediaFusion.torrent?.infoHash, 'aaa');
+  });
+});
+
+describe('isRoundSize', () => {
+  it('tells sizes rounded to a GiB, GB, MiB or their hundredths', () => {
+    for (const size of [
+      29 * 1024 ** 3, // 29 GiB
+      193445327012, // 180.16 GiB
+      786054513, // 749.64 MiB
+      7 * 1024 ** 2, // 7 MiB
+      84 * 1e9, // 84 GB
+      12345 * 1e7, // 123.45 GB
+    ]) {
+      assert.equal(isRoundSize(size), true, String(size));
+    }
+  });
+
+  it('takes sizes counted to the byte for what they are', () => {
+    for (const size of [223946512868, 62378309238, 62122145270, 193450314699]) {
+      assert.equal(isRoundSize(size), false, String(size));
+    }
   });
 });

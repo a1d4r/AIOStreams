@@ -11,6 +11,7 @@ import {
   hasTrackLists,
 } from '../utils/index.js';
 import StreamUtils, {
+  isRoundSize,
   shouldPassthroughStage,
   torrentFileKeys,
 } from './utils.js';
@@ -171,6 +172,23 @@ class StreamDeduplicator {
 
       const torrentKey = torrentKeys?.get(stream);
       if (torrentKey) currentStreamKeyStrings.push(`infoHash:${torrentKey}`);
+      // A debrid copy without an infoHash (MediaFusion hides them) that
+      // shareInfoHash could not tie to a torrent: an addon's copies of one
+      // file on several services are still copies of one torrent. Only a
+      // size counted to the byte tells the file: two versions of a release
+      // keep its name, and rounded sizes can be the same.
+      if (
+        deduplicationKeys.includes('infoHash') &&
+        stream.type === 'debrid' &&
+        !stream.torrent?.infoHash &&
+        stream.filename &&
+        stream.size &&
+        !isRoundSize(stream.size)
+      ) {
+        currentStreamKeyStrings.push(
+          `infoHash:${stream.addon.preset.id}:${stream.filename}@${stream.size}`
+        );
+      }
       if (deduplicationKeys.includes('infoHash') && isUsenet && stream.nzbUrl) {
         currentStreamKeyStrings.push(`infoHash:${stream.nzbUrl}`);
       }
