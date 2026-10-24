@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { plausible, sanitise } from './select.js';
+import type { SegmentProviderId } from '../../utils/constants.js';
+import { decided, merge, plausible, sanitise } from './select.js';
 import type { Segment, SegmentType } from './types.js';
 
 function seg(type: SegmentType, startMs: number, endMs: number): Segment {
@@ -130,5 +131,171 @@ describe('plausible', () => {
     assert.equal(plausible(seg('Intro', 1_300_000, 1_390_000), file), false);
     // Without a length an opening is taken where it is.
     assert.equal(plausible(seg('Intro', 1_300_000, 1_390_000), {}), true);
+  });
+});
+
+function from(
+  provider: SegmentProviderId,
+  type: SegmentType,
+  startMs: number,
+  endMs: number,
+  matchesFile = false
+): Segment {
+  return {
+    type,
+    startMs,
+    endMs,
+    provider,
+    ...(matchesFile && { matchesFile }),
+  };
+}
+
+const ORDER: SegmentProviderId[] = ['introdb', 'aniskip', 'theintrodb', 'pmdb'];
+
+describe('merge', () => {
+  test('keeps the operator order when nothing matches the file', () => {
+    const results = new Map<SegmentProviderId, Segment[]>([
+      ['theintrodb', [from('theintrodb', 'Intro', 228_000, 246_000)]],
+      ['introdb', [from('introdb', 'Outro', 3_431_000, 3_500_000)]],
+      ['aniskip', [from('aniskip', 'Outro', 3_400_000, 3_490_000)]],
+    ]);
+    assert.deepEqual(
+      merge(results, ORDER, { runtimeMs: 3_500_000 }).map((s) => [
+        s.type,
+        s.provider,
+      ]),
+      [
+        ['Intro', 'theintrodb'],
+        ['Outro', 'introdb'],
+      ]
+    );
+  });
+
+  test("puts a marker timed on the file's release first", () => {
+    // Frieren S01E01, a 1420 s release: IntroDB's opening is another cut's.
+    const results = new Map<SegmentProviderId, Segment[]>([
+      ['introdb', [from('introdb', 'Intro', 3_200, 93_200)]],
+      ['aniskip', [from('aniskip', 'Intro', 104_000, 194_000, true)]],
+      ['theintrodb', [from('theintrodb', 'Intro', 100_000, 190_000, true)]],
+    ]);
+    const [intro] = merge(results, ORDER, { durationMs: 1_420_000 });
+    assert.equal(intro.provider, 'aniskip');
+  });
+
+  const picked = (segments: Segment[]) =>
+    segments.map((s) => [s.type, s.provider, s.startMs, s.endMs]);
+
+  test('never lets misplaced credits win by matching the file', () => {
+    // Breaking Bad S05E14, d=2847: TheIntroDB's credits sit at the opening.
+    const bb = new Map<SegmentProviderId, Segment[]>([
+      ['introdb', [from('introdb', 'Outro', 2_787_000, 2_846_000)]],
+      [
+        'theintrodb',
+        [
+          from('theintrodb', 'Intro', 290_916, 317_457, true),
+          from('theintrodb', 'Outro', 291_000, 307_000, true),
+        ],
+      ],
+    ]);
+    assert.deepEqual(picked(merge(bb, ORDER, { durationMs: 2_847_000 })), [
+      ['Intro', 'theintrodb', 290_916, 317_457],
+      ['Outro', 'introdb', 2_787_000, 2_846_000],
+    ]);
+
+    // One Piece S01E01, d=1542: TheIntroDB's only credits are 0-110 s.
+    const op = new Map<SegmentProviderId, Segment[]>([
+      ['theintrodb', [from('theintrodb', 'Outro', 0, 110_026, true)]],
+    ]);
+    assert.deepEqual(merge(op, ORDER, { durationMs: 1_542_000 }), []);
+
+    // Attack on Titan S01E01, d=1474: AniSkip's "ed" 11-101 s is the opening.
+    const aot = new Map<SegmentProviderId, Segment[]>([
+      [
+        'aniskip',
+        [
+          from('aniskip', 'Intro', 11_000, 101_000, true),
+          from('aniskip', 'Outro', 11_000, 101_000, true),
+        ],
+      ],
+      ['introdb', [from('introdb', 'Outro', 1_330_000, 1_420_000)]],
+    ]);
+    assert.deepEqual(picked(merge(aot, ORDER, { durationMs: 1_474_000 })), [
+      ['Intro', 'aniskip', 11_000, 101_000],
+      ['Outro', 'introdb', 1_330_000, 1_420_000],
+    ]);
+  });
+
+  test('takes the next credits when the best ones start before the opening ends', () => {
+    // No length: credits need only follow the opening and pass 5 minutes.
+    const results = new Map<SegmentProviderId, Segment[]>([
+      ['introdb', [from('introdb', 'Intro', 300_000, 400_000)]],
+      ['aniskip', [from('aniskip', 'Outro', 350_000, 450_000)]],
+      ['theintrodb', [from('theintrodb', 'Outro', 1_300_000, 1_390_000)]],
+    ]);
+    assert.deepEqual(
+      picked(merge(results, ORDER, {})).map((p) => p[1]),
+      ['introdb', 'theintrodb']
+    );
+  });
+});
+
+describe('decided', () => {
+  const lookup = { durationMs: 1_420_000 };
+
+  test('decides credits only once the opening is decided', () => {
+    const results = new Map<SegmentProviderId, Segment[]>([
+      ['introdb', [from('introdb', 'Outro', 1_330_000, 1_420_000)]],
+    ]);
+    const settled = new Set<SegmentProviderId>(['introdb']);
+    // AniSkip, still answering, could bring an opening that ends later.
+    assert.equal(
+      decided(['Outro'], ORDER, results, settled, {}, new Set()),
+      false
+    );
+    assert.equal(
+      decided(['Outro'], ORDER, results, new Set(ORDER), {}, new Set()),
+      true
+    );
+  });
+
+  const intro = (provider: SegmentProviderId, matched = false) =>
+    new Map<SegmentProviderId, Segment[]>([
+      [provider, [from(provider, 'Intro', 100_000, 190_000, matched)]],
+    ]);
+
+  test('waits for a provider that could match the release', () => {
+    const matching = new Set<SegmentProviderId>(['aniskip', 'theintrodb']);
+    const settled = new Set<SegmentProviderId>(['introdb']);
+    assert.equal(
+      decided(['Intro'], ORDER, intro('introdb'), settled, lookup, matching),
+      false
+    );
+    // Without a measured length nothing can match, so the first one decides.
+    assert.equal(
+      decided(['Intro'], ORDER, intro('introdb'), settled, lookup, new Set()),
+      true
+    );
+  });
+
+  test('stops once the best possible marker is in', () => {
+    const matching = new Set<SegmentProviderId>(['aniskip', 'theintrodb']);
+    const settled = new Set<SegmentProviderId>(['aniskip']);
+    // IntroDB is earlier in order but cannot match, TheIntroDB is later.
+    assert.equal(
+      decided(
+        ['Intro'],
+        ORDER,
+        intro('aniskip', true),
+        settled,
+        lookup,
+        matching
+      ),
+      true
+    );
+    // Unmatched, the same answer could still lose to IntroDB or TheIntroDB.
+    assert.equal(
+      decided(['Intro'], ORDER, intro('aniskip'), settled, lookup, matching),
+      false
+    );
   });
 });
