@@ -7,6 +7,7 @@ import type {
   SegmentProvider,
   SegmentType,
 } from '../types.js';
+import { askedLength } from '../length.js';
 
 interface AniSkipResult {
   interval?: { startTime?: number; endTime?: number };
@@ -98,15 +99,38 @@ async function query(
   return body.results;
 }
 
+/** Discover the releases with 0, then ask for the one that fits the listed runtime, if any does. */
+async function fromRuntime(
+  lookup: SegmentLookup,
+  ctx: ProviderContext
+): Promise<AniSkipResult[]> {
+  const discovered = await query(lookup, ctx, 0);
+  if (!discovered.length) return [];
+
+  const release = closestRelease(discovered, lookup.runtimeMs);
+  if (release === null) return [];
+  if (release === undefined) return discovered;
+  const exact = await query(lookup, ctx, release);
+  return exact.length
+    ? exact
+    : discovered.filter(
+        (r) =>
+          typeof r.episodeLength === 'number' &&
+          Math.abs(r.episodeLength - release) < SAME_RELEASE_S
+      );
+}
+
 /**
  * MAL-keyed, anime only, numbered within the MAL entry: a split cour's second
  * part starts again at 1 and One Piece counts on from 1 across every season,
  * so the episode is `animeEpisode`, never the stated one.
  *
- * A length asks about that release alone, through a window a few seconds wide
- * that a runtime rounded to whole minutes rarely lands in; 0 asks across every
- * release, one submission per type. So discover the lengths with 0, then ask
- * again for whichever fits the runtime.
+ * A length asks about that release alone, through a window ±20 s wide that a
+ * runtime rounded to whole minutes rarely lands in; 0 asks across every
+ * release, one submission per type. So with only a runtime, discover the
+ * lengths with 0, then ask again for whichever fits it. A measured file
+ * length is asked about directly, and nothing found for it means nothing:
+ * another release's opening can sit two minutes away.
  */
 export const aniSkipProvider: SegmentProvider = {
   id: 'aniskip',
@@ -114,6 +138,7 @@ export const aniSkipProvider: SegmentProvider = {
   defaultBaseUrl: 'https://api.aniskip.com',
   kinds: ['episode'],
   idKeys: ['mal'],
+  lengthAware: true,
 
   supports(lookup) {
     return (
@@ -122,22 +147,10 @@ export const aniSkipProvider: SegmentProvider = {
   },
 
   async fetch(lookup: SegmentLookup, ctx: ProviderContext) {
-    const discovered = await query(lookup, ctx, 0);
-    if (!discovered.length) return [];
-
-    const release = closestRelease(discovered, lookup.runtimeMs);
-    if (release === null) return [];
-    let results = discovered;
-    if (release !== undefined) {
-      const exact = await query(lookup, ctx, release);
-      results = exact.length
-        ? exact
-        : discovered.filter(
-            (r) =>
-              typeof r.episodeLength === 'number' &&
-              Math.abs(r.episodeLength - release) < SAME_RELEASE_S
-          );
-    }
+    const length = askedLength(lookup);
+    const results = length?.exact
+      ? await query(lookup, ctx, length.ms / 1000)
+      : await fromRuntime(lookup, ctx);
 
     const ordered = [...results].sort(
       (a, b) =>
