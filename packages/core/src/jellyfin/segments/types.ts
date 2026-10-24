@@ -11,6 +11,8 @@ export interface Segment {
   provider: SegmentProviderId;
   /** Length of the release the provider timed it on, when it says. */
   releaseMs?: number;
+  /** Timed on a release of the played file's measured length, so it fits this cut. */
+  matchesFile?: boolean;
 }
 
 /** Every id space a provider might key on. Keys are Stremio's spellings. */
@@ -70,6 +72,8 @@ export interface SegmentProvider {
   readonly kinds: readonly SegmentLookup['kind'][];
   /** Its answer depends on the length asked about, which then goes into its cache key. */
   readonly lengthAware?: boolean;
+  /** Given a measured length, it can say which markers were timed on that release (`matchesFile`). */
+  readonly matchesRelease?: boolean;
   /** Absent means it needs no credentials. */
   configured?(ctx: ProviderContext): boolean;
   /** The credential a configuration can supply when the instance has none. */

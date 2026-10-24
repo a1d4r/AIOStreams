@@ -105,6 +105,50 @@ describe('theIntroDbProvider', () => {
     );
   });
 
+  test('marks markers of the release closest to a measured length', async (t) => {
+    const agent = await mockApi(t);
+    const pool = agent.get(BASE);
+    const body = (group: number) => ({
+      group_duration_ms: group,
+      intro: [{ start_ms: 228_000, end_ms: 246_000 }],
+    });
+    pool
+      .intercept({
+        path: (path: string) =>
+          /imdb_id=tt6\b/.test(path) && /list_versions=true/.test(path),
+      })
+      .reply(200, {
+        versions: [{ duration_ms: 3_494_000 }, { duration_ms: 0 }],
+      });
+    pool
+      .intercept({
+        path: (path: string) =>
+          /imdb_id=tt6\b/.test(path) && /duration_ms=3494000(&|$)/.test(path),
+      })
+      .reply(200, body(3_494_000));
+    // No release within five minutes: the most submitted one.
+    pool
+      .intercept({
+        path: (path: string) =>
+          /imdb_id=tt6\b/.test(path) && !/duration_ms|list_versions/.test(path),
+      })
+      .reply(200, body(3_500_000));
+
+    const lookup = { ...episode, ids: { imdb: 'tt6' } };
+    const [same] = await theIntroDbProvider.fetch(
+      { ...lookup, durationMs: 3_495_000 },
+      ctx
+    );
+    assert.equal(same.matchesFile, true);
+    assert.equal(same.releaseMs, 3_494_000);
+    const [other] = await theIntroDbProvider.fetch(
+      { ...lookup, durationMs: 2_600_000 },
+      ctx
+    );
+    assert.equal(other.matchesFile, undefined);
+    assert.equal(other.releaseMs, 3_500_000);
+  });
+
   test('treats 404 as a miss and other failures as errors', async (t) => {
     const agent = await mockApi(t);
     const pool = agent.get(BASE);
