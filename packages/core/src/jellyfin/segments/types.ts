@@ -30,6 +30,8 @@ export interface SegmentLookup {
   runtimeMs?: number;
   /** TMDB season/episode candidates, best first. Absent: `season`/`episode` already are; empty: none known. */
   tmdbEpisodes?: { season: number; episode: number }[];
+  /** The id space `season`/`episode` are numbered in: the stated id's. Set once ids are resolved. */
+  numberedBy?: SegmentIdKey;
 }
 
 export interface SegmentProviderStatus {
