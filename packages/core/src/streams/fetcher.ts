@@ -14,7 +14,7 @@ import StreamFilter from './filterer.js';
 import StreamPrecompute from './precomputer.js';
 import StreamDeduplicator from './deduplicator.js';
 import { StreamContext } from './context.js';
-import { shareCacheStatus, shareFileInfo } from './utils.js';
+import { shareCacheStatus, shareFileInfo, shareInfoHash } from './utils.js';
 import {
   classifyAddonError,
   type AnalyticsDisposition,
@@ -262,6 +262,7 @@ class StreamFetcher {
       await resolveRemuxDbMediaInfo(groupStreams, context, this.userData);
       mediaInfoMs += Date.now() - mediaInfoStart;
 
+      shareInfoHash(groupStreams);
       shareCacheStatus(groupStreams);
       shareFileInfo(groupStreams);
 

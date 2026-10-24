@@ -15,7 +15,11 @@ import { Wrapper } from './wrapper.js';
 import { PresetManager } from '../presets/index.js';
 import { FeatureControl } from '../utils/feature.js';
 import { StreamContext, StreamUtils } from '../streams/index.js';
-import { shareCacheStatus, shareFileInfo } from '../streams/utils.js';
+import {
+  shareCacheStatus,
+  shareFileInfo,
+  shareInfoHash,
+} from '../streams/utils.js';
 import { buildPlayChain, type FailoverContentType } from './play-chain.js';
 import { resolveServiceWrappedStreams } from './serviceWrapper.js';
 import { resolveRemuxDbMediaInfo } from '../remuxdb/wrap.js';
@@ -315,6 +319,7 @@ export async function processStreams(
   if (isMeta) {
     await ctx.precomputer.precomputeSeaDexOnly(processedStreams, context);
     await withMediaInfo(processedStreams);
+    shareInfoHash(processedStreams);
     shareCacheStatus(processedStreams);
     shareFileInfo(processedStreams);
     const metaFilterStart = Date.now();
@@ -341,6 +346,7 @@ export async function processStreams(
     await withMediaInfo(
       processedStreams.filter((s) => !preServiceWrapIds.has(s.id))
     );
+    shareInfoHash(processedStreams);
     shareCacheStatus(processedStreams);
     shareFileInfo(processedStreams);
     const filterStart = Date.now();
@@ -355,9 +361,10 @@ export async function processStreams(
     processedStreams = await ctx.filterer.filterBlocklisted(processedStreams);
   }
 
-  // Addon groups and dynamic fetching share cached status and file info only
-  // within each fetch, so share them again across all streams before the
-  // final dedup. Streams told their file before filters keep it.
+  // Addon groups and dynamic fetching share infoHashes, cached status and file
+  // info only within each fetch, so share them again across all streams
+  // before the final dedup. Streams told their file before filters keep it.
+  shareInfoHash(processedStreams);
   shareCacheStatus(processedStreams);
   shareFileInfo(processedStreams);
   const dedupStart = Date.now();

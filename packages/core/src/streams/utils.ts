@@ -81,6 +81,130 @@ export function shareCacheStatus(streams: ParsedStream[]): void {
   }
 }
 
+/**
+ * Whether a size is rounded rather than counted to the byte: a whole number
+ * of MB, or of MiB to two decimals (which covers GiB to two decimals too).
+ * Most addons round some sizes like this, and two releases rounded to one
+ * size can be different files. A size counted to the byte lands on one by
+ * chance: about 1 in 6,000, or 1 in 128 for disc files cut to 2 KiB blocks.
+ */
+export function isRoundSize(size: number): boolean {
+  if (size % 1e6 === 0) return true;
+  const step = 1024 ** 2 / 100;
+  return Math.abs(size - Math.round(size / step) * step) < 1;
+}
+
+// The infoHash shareInfoHash gave each copy, so that a later call over more
+// streams (an addon group's first, then all of them) can take it back.
+const sharedInfoHashes = new WeakMap<ParsedStream, string>();
+
+/**
+ * Give a debrid copy without an infoHash (MediaFusion hides them since 6.2.0)
+ * the infoHash of the one torrent among the other copies that has its file.
+ * The copy's size must be counted to the byte (see isRoundSize) and be one
+ * copy's size, as a file's or a folder's. If any copy gives the copy's name,
+ * the same copy must give it as its file's, or any copy of the torrent as the
+ * torrent's or folder's: a file of that name and size, or a file of that
+ * size in a torrent of that name. A file uploaded in several torrents fits
+ * each of them, and the copy is left without one; so is a copy with a
+ * rounded size. Two torrents with one file of one name and byte size share
+ * the file, and either one's infoHash plays it.
+ *
+ * A copy given an infoHash by an earlier call gives it back if this call
+ * finds it fits another torrent too, with the file info and the cached status
+ * it took from that torrent. Runs before shareCacheStatus, so cached status,
+ * file info and dedup take the copy for the torrent's.
+ */
+export function shareInfoHash(streams: ParsedStream[]): void {
+  // Like videoFile, but a name without a video extension is a folder's or a
+  // torrent's and keeps its slashes: `Title / Original Title [2001]`.
+  const nameKey = (name: string | null | undefined) => {
+    let base = name?.normalize('NFC').trim();
+    const extension = base ? VIDEO_FILE.exec(base) : null;
+    if (base && extension) {
+      base = base.slice(0, extension.index).split(/[\\/]/).pop();
+    }
+    return base?.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase() || undefined;
+  };
+  const sharedTo = (stream: ParsedStream) => {
+    const hash = sharedInfoHashes.get(stream);
+    return hash !== undefined && stream.torrent?.infoHash === hash
+      ? hash
+      : undefined;
+  };
+
+  const bySize = new Map<number, { hash: string; name?: string }[]>();
+  const torrentNames = new Map<string, Set<string>>();
+  const names = new Set<string>();
+  for (const stream of streams) {
+    const hash = stream.torrent?.infoHash?.toLowerCase();
+    if (
+      !hash ||
+      sharedTo(stream) ||
+      stream.type === 'usenet' ||
+      stream.type === 'stremio-usenet'
+    ) {
+      continue;
+    }
+    const name = nameKey(stream.filename);
+    for (const size of new Set([stream.size, stream.folderSize])) {
+      if (!size || isRoundSize(size)) continue;
+      let copies = bySize.get(size);
+      if (!copies) bySize.set(size, (copies = []));
+      copies.push({ hash, name });
+    }
+    if (name) names.add(name);
+    for (const title of [stream.folderName, stream.torrent?.title]) {
+      const key = nameKey(title);
+      if (!key) continue;
+      names.add(key);
+      let keys = torrentNames.get(hash);
+      if (!keys) torrentNames.set(hash, (keys = new Set()));
+      keys.add(key);
+    }
+  }
+
+  for (const stream of streams) {
+    const shared = sharedTo(stream);
+    if (
+      stream.type !== 'debrid' ||
+      !stream.service ||
+      (stream.torrent?.infoHash && !shared) ||
+      !stream.size ||
+      isRoundSize(stream.size)
+    ) {
+      continue;
+    }
+    const own = [stream.filename, stream.folderName]
+      .map(nameKey)
+      .filter((key): key is string => !!key);
+    const named = own.some((key) => names.has(key));
+    const hashes = new Set(
+      (bySize.get(stream.size) ?? [])
+        .filter(
+          ({ hash, name }) =>
+            !named ||
+            own.some((key) => key === name || torrentNames.get(hash)?.has(key))
+        )
+        .map(({ hash }) => hash)
+    );
+    if (shared) hashes.add(shared);
+    if (hashes.size === 1) {
+      const [hash] = hashes;
+      stream.torrent = { ...stream.torrent, infoHash: hash };
+      sharedInfoHashes.set(stream, hash);
+    } else if (shared) {
+      delete stream.torrent!.infoHash;
+      delete stream.torrentFile;
+      if (stream.service.cacheShared) {
+        stream.service.cached = false;
+        delete stream.service.cacheShared;
+      }
+      sharedInfoHashes.delete(stream);
+    }
+  }
+}
+
 // The extensions the deduplicator strips from filenames.
 const VIDEO_FILE =
   /\.(mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|3gp|3g2|m2ts|ts|vob|ogv|ogm|divx|xvid|rm|rmvb|asf|mxf|mka|mks|mk3d|f4v|f4p|f4a|f4b)$/i;
