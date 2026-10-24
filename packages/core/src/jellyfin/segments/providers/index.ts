@@ -4,6 +4,7 @@ import { aniSkipProvider } from './aniskip.js';
 import { animeSkipProvider } from './animeskip.js';
 import { introDbProvider } from './introdb.js';
 import { pmdbProvider } from './pmdb.js';
+import { theIntroDbProvider } from './theintrodb.js';
 
 /**
  * Every provider, keyed on its id. The record is typed on the id union from
@@ -18,6 +19,13 @@ export const SEGMENT_PROVIDER_REGISTRY: Record<
   aniskip: aniSkipProvider,
   animeskip: animeSkipProvider,
   pmdb: pmdbProvider,
+  theintrodb: theIntroDbProvider,
 };
 
-export { aniSkipProvider, animeSkipProvider, introDbProvider, pmdbProvider };
+export {
+  aniSkipProvider,
+  animeSkipProvider,
+  introDbProvider,
+  pmdbProvider,
+  theIntroDbProvider,
+};
