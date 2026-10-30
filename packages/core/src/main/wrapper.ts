@@ -36,11 +36,13 @@ import {
   makeUrlLogSafe,
   formatZodError,
   PossibleRecursiveRequestError,
+  PrivateAddressError,
   appConfig,
   getTimeTakenSincePoint,
   RequestOptions,
   DistributedLock,
   requestLockType,
+  registerLockErrorClass,
 } from '../utils/index.js';
 import { Preset, PresetManager } from '../presets/index.js';
 import {
@@ -81,6 +83,11 @@ const streamsCache = Cache.getInstance<string, ParsedStream[]>(
   'streams',
   () => appConfig.resources.cache.stream.maxSize
 );
+// The addon did not answer (network, timeout, HTTP 5xx, 408, 429), unlike one
+// that refused the request or answered with no valid manifest.
+export class AddonUnavailableError extends Error {}
+registerLockErrorClass(AddonUnavailableError);
+
 // Remembers manifests that failed, so a dead addon is not re-fetched on every request.
 const manifestFailureCache = Cache.getInstance<string, string>(
   'manifest_failure',
@@ -211,9 +218,17 @@ export class Wrapper {
           signal: AbortSignal.any([signal, AbortSignal.timeout(fetchTimeout)]),
           headers: this.addon.headers,
           forwardIp: this.addon.ip,
+        }).catch((error: Error) => {
+          throw error instanceof PossibleRecursiveRequestError ||
+            error instanceof PrivateAddressError
+            ? error
+            : new AddonUnavailableError(error.message);
         });
         if (!res.ok) {
-          throw new Error(`${res.status} - ${res.statusText}`);
+          const message = `${res.status} - ${res.statusText}`;
+          throw res.status >= 500 || res.status === 408 || res.status === 429
+            ? new AddonUnavailableError(message)
+            : new Error(message);
         }
         const data = await res.json();
         const manifest = ManifestSchema.safeParse(data);
@@ -242,9 +257,10 @@ export class Wrapper {
         if (error instanceof PossibleRecursiveRequestError) {
           throw error;
         }
-        throw new Error(
-          `Failed to fetch manifest for ${this.getAddonName(this.addon)}: ${error.message}`
-        );
+        const message = `Failed to fetch manifest for ${this.getAddonName(this.addon)}: ${error.message}`;
+        throw error instanceof AddonUnavailableError
+          ? new AddonUnavailableError(message)
+          : new Error(message);
       }
     };
 
@@ -692,7 +708,7 @@ export class Wrapper {
       timeoutHandle = setTimeout(
         () =>
           reject(
-            new Error(
+            new AddonUnavailableError(
               `Request for ${resourceName} for ${this.getAddonName(this.addon)} timed out after ${timeout}ms`
             )
           ),
