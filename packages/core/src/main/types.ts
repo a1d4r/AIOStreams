@@ -31,6 +31,8 @@ export interface AIOStreamsResponse<T> {
 
 export interface AIOStreamsOptions {
   skipFailedAddons?: boolean;
+  /** With skipFailedAddons false: still skip addons that did not answer. */
+  skipUnavailableAddons?: boolean;
   increasedManifestTimeout?: boolean;
   bypassManifestCache?: boolean;
   /** Which client path this engine serves, for media info probes. */

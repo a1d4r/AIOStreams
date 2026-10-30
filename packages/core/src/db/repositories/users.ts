@@ -119,6 +119,7 @@ export class UserRepository {
     try {
       validatedConfig = await validateConfig(configToValidate, {
         skipErrorsFromAddonsOrProxies: false,
+        skipUnavailableAddons: true,
         decryptValues: false,
         increasedManifestTimeout: true,
         bypassManifestCache: true,
@@ -429,6 +430,7 @@ export class UserRepository {
     try {
       validatedConfig = await validateConfig(configToValidate, {
         skipErrorsFromAddonsOrProxies: false,
+        skipUnavailableAddons: true,
         decryptValues: false,
         increasedManifestTimeout: true,
         bypassManifestCache: true,
