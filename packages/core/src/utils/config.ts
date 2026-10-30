@@ -113,6 +113,8 @@ export interface ValidateConfigOptions {
   /** Read paths only: variants have already been applied and schema-checked. */
   skipVariantValidation?: boolean;
   skipErrorsFromAddonsOrProxies?: boolean;
+  /** A save must not depend on third-party uptime: the request path skips these addons anyway. */
+  skipUnavailableAddons?: boolean;
   decryptValues?: boolean;
   increasedManifestTimeout?: boolean;
   bypassManifestCache?: boolean;
@@ -524,6 +526,7 @@ export async function validateConfig(
 
   await new AIOStreams(ensureDecrypted(config), {
     skipFailedAddons: options?.skipErrorsFromAddonsOrProxies ?? false,
+    skipUnavailableAddons: options?.skipUnavailableAddons ?? false,
     increasedManifestTimeout: options?.increasedManifestTimeout ?? false,
     bypassManifestCache: options?.bypassManifestCache ?? false,
   }).initialise();

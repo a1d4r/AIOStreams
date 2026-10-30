@@ -7,7 +7,7 @@
 } from '../utils/index.js';
 import { config as appConfig } from '../config/index.js';
 import { constants } from '../utils/index.js';
-import { Wrapper } from './wrapper.js';
+import { AddonUnavailableError, Wrapper } from './wrapper.js';
 import { PresetManager } from '../presets/index.js';
 import { FeatureControl } from '../utils/feature.js';
 import { createProxy } from '../proxy/index.js';
@@ -248,7 +248,11 @@ export async function fetchManifests(ctx: AIOStreamsContext): Promise<void> {
             }),
           ];
         } catch (error: any) {
-          if (ctx.options?.skipFailedAddons !== false) {
+          if (
+            ctx.options?.skipFailedAddons !== false ||
+            (ctx.options?.skipUnavailableAddons &&
+              error instanceof AddonUnavailableError)
+          ) {
             ctx.addonInitialisationErrors.push({
               addon: addon,
               error: error.message,
