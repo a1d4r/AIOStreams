@@ -15,11 +15,7 @@ import { Wrapper } from './wrapper.js';
 import { PresetManager } from '../presets/index.js';
 import { FeatureControl } from '../utils/feature.js';
 import { StreamContext, StreamUtils } from '../streams/index.js';
-import {
-  shareCacheStatus,
-  shareFileInfo,
-  shareInfoHash,
-} from '../streams/utils.js';
+import { shareTorrentCopies } from '../streams/torrent-copies.js';
 import { buildPlayChain, type FailoverContentType } from './play-chain.js';
 import { resolveServiceWrappedStreams } from './serviceWrapper.js';
 import { resolveRemuxDbMediaInfo } from '../remuxdb/wrap.js';
@@ -319,9 +315,7 @@ export async function processStreams(
   if (isMeta) {
     await ctx.precomputer.precomputeSeaDexOnly(processedStreams, context);
     await withMediaInfo(processedStreams);
-    shareInfoHash(processedStreams);
-    shareCacheStatus(processedStreams);
-    shareFileInfo(processedStreams);
+    shareTorrentCopies(processedStreams);
     const metaFilterStart = Date.now();
     processedStreams = await ctx.filterer.filter(processedStreams, context);
     metaFilterMs = Date.now() - metaFilterStart;
@@ -346,9 +340,7 @@ export async function processStreams(
     await withMediaInfo(
       processedStreams.filter((s) => !preServiceWrapIds.has(s.id))
     );
-    shareInfoHash(processedStreams);
-    shareCacheStatus(processedStreams);
-    shareFileInfo(processedStreams);
+    shareTorrentCopies(processedStreams);
     const filterStart = Date.now();
     processedStreams = await ctx.filterer.filter(processedStreams, context);
     filterMs = Date.now() - filterStart;
@@ -364,9 +356,7 @@ export async function processStreams(
   // Addon groups and dynamic fetching share infoHashes, cached status and file
   // info only within each fetch, so share them again across all streams
   // before the final dedup. Streams told their file before filters keep it.
-  shareInfoHash(processedStreams);
-  shareCacheStatus(processedStreams);
-  shareFileInfo(processedStreams);
+  shareTorrentCopies(processedStreams);
   const dedupStart = Date.now();
   processedStreams = await ctx.deduplicator.deduplicate(processedStreams);
   deduplicationMs = Date.now() - dedupStart;

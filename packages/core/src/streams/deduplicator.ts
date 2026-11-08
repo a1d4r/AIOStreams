@@ -10,11 +10,8 @@ import {
   constants,
   hasTrackLists,
 } from '../utils/index.js';
-import StreamUtils, {
-  isRoundSize,
-  shouldPassthroughStage,
-  torrentFileKeys,
-} from './utils.js';
+import StreamUtils, { shouldPassthroughStage } from './utils.js';
+import { isRoundSize, torrentFileKeys } from './torrent-copies.js';
 import { shouldProxyStream } from './proxifier.js';
 import { isExternalDebridFailover } from '../main/play-chain.js';
 import { PLAYBACK_PATH_PREFIX } from '../debrid/utils.js';

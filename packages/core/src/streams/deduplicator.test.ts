@@ -1,7 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import StreamDeduplicator from './deduplicator.js';
-import { shareCacheStatus, shareFileInfo, shareInfoHash } from './utils.js';
+import {
+  shareCacheStatus,
+  shareFileInfo,
+  shareInfoHash,
+} from './torrent-copies.js';
 import type { ParsedStream, UserData } from '../db/schemas.js';
 
 function makeStream(
