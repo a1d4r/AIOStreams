@@ -14,7 +14,7 @@ import StreamFilter from './filterer.js';
 import StreamPrecompute from './precomputer.js';
 import StreamDeduplicator from './deduplicator.js';
 import { StreamContext } from './context.js';
-import { shareCacheStatus, shareFileInfo, shareInfoHash } from './utils.js';
+import { shareTorrentCopies } from './torrent-copies.js';
 import {
   classifyAddonError,
   type AnalyticsDisposition,
@@ -262,9 +262,7 @@ class StreamFetcher {
       await resolveRemuxDbMediaInfo(groupStreams, context, this.userData);
       mediaInfoMs += Date.now() - mediaInfoStart;
 
-      shareInfoHash(groupStreams);
-      shareCacheStatus(groupStreams);
-      shareFileInfo(groupStreams);
+      shareTorrentCopies(groupStreams);
 
       // Blocklist runs before dedup so a flagged candidate never survives
       // as a failover variant harvested from discarded duplicates.

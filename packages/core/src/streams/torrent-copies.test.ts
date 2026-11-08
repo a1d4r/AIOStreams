@@ -5,7 +5,7 @@ import {
   shareCacheStatus,
   shareFileInfo,
   shareInfoHash,
-} from './utils.js';
+} from './torrent-copies.js';
 import type { ParsedStream } from '../db/schemas.js';
 
 function makeStream(
