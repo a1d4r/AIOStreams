@@ -9,6 +9,12 @@ import type {
   SegmentType,
 } from '../types.js';
 import { askedLength } from '../length.js';
+import {
+  DEFAULT_PAUSE_S,
+  MAX_PAUSE_S,
+  providerPause,
+  resetIn,
+} from './pause.js';
 
 interface TheIntroDbSegment {
   start_ms?: number | null;
@@ -78,15 +84,12 @@ function sortKey(raw: TheIntroDbSegment): [number, number] {
 
 /*
  * The daily allowance is per IP, so every user of an instance shares it, and
- * a 429 is answered again for every lookup until the window resets. After one,
- * nothing is sent until then. In the shared cache so every replica waits.
+ * a 429 is answered again for every lookup until the window resets.
  */
-const pause = Cache.getInstance<string, number>('theintrodb-pause', 1);
+const pause = providerPause('theintrodb-pause', 'TheIntroDB');
 const PAUSE_KEY = 'until';
 /** When the response names no reset: the short window is ten seconds, the daily one unknown. */
-const DEFAULT_PAUSE_S = 60;
 const EXHAUSTED_PAUSE_S = 3600;
-const MAX_PAUSE_S = 86_400;
 
 /*
  * Every 10 s step of a file's length is its own marker-cache key, so the
@@ -105,13 +108,6 @@ const versionLists = Cache.getInstance<string, TheIntroDbVersion[]>(
 
 /** The server's own window for matching a length to a release. */
 const VERSION_WINDOW_MS = 5 * 60_000;
-
-/** Seconds from now: a delta, or an epoch time in seconds. */
-function resetIn(value: string | null): number | undefined {
-  const n = Number(value);
-  if (!value || !Number.isFinite(n) || n <= 0) return undefined;
-  return n > 1e9 ? n - Date.now() / 1000 : n;
-}
 
 export function pauseFor(headers: Headers): number {
   const exhausted = headers.get('x-usagelimit-remaining') === '0';
@@ -136,9 +132,7 @@ async function ask<T>(
   ctx: ProviderContext,
   params: URLSearchParams
 ): Promise<T | undefined> {
-  const until = await pause.get(PAUSE_KEY).catch(() => undefined);
-  if (until && until > Date.now())
-    throw new Error('TheIntroDB is rate limited, waiting for its reset');
+  await pause.check(PAUSE_KEY);
   const response = await makeRequest(
     `${ctx.baseUrl.replace(/\/+$/, '')}/v4/media?${params}`,
     {
@@ -151,10 +145,7 @@ async function ask<T>(
   );
   if (response.status === 404) return undefined;
   if (response.status === 429) {
-    const seconds = pauseFor(response.headers);
-    await pause
-      .set(PAUSE_KEY, Date.now() + seconds * 1000, seconds)
-      .catch(() => undefined);
+    await pause.start(PAUSE_KEY, pauseFor(response.headers));
   }
   // Anything else, a rate limit included, is thrown so it is not remembered
   // as a miss.

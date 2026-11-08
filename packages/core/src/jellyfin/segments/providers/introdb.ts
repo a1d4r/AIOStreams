@@ -7,6 +7,7 @@ import type {
   SegmentProvider,
   SegmentType,
 } from '../types.js';
+import { providerPause, retryAfter } from './pause.js';
 
 interface IntroDbSegment {
   start_ms?: number | null;
@@ -34,6 +35,9 @@ const EPISODE_FIELDS: [Field, SegmentType][] = [
 
 /** Movies only define end credits; stray intro rows sit inside the credits. */
 const MOVIE_FIELDS: [Field, SegmentType][] = [['outro', 'Outro']];
+
+/** Per base URL: a self-hosted mirror has its own limit. */
+const pause = providerPause('introdb-pause', 'IntroDB');
 
 function msOf(ms: unknown, sec: unknown): number | null {
   if (typeof ms === 'number' && Number.isFinite(ms)) return ms;
@@ -69,6 +73,7 @@ export const introDbProvider: SegmentProvider = {
       params.set('season', String(lookup.season));
       params.set('episode', String(lookup.episode));
     }
+    await pause.check(ctx.baseUrl);
     const response = await makeRequest(
       `${ctx.baseUrl.replace(/\/+$/, '')}/segments?${params}`,
       {
@@ -79,6 +84,8 @@ export const introDbProvider: SegmentProvider = {
         },
       }
     );
+    if (response.status === 429)
+      await pause.start(ctx.baseUrl, retryAfter(response.headers));
     // A miss is a 200 with null fields. A rate limit or a server error is
     // thrown so it is not remembered as one.
     if (response.status === 429 || response.status >= 500)
