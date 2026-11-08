@@ -8,6 +8,7 @@ import type {
   SegmentType,
 } from '../types.js';
 import { askedLength } from '../length.js';
+import { providerPause, retryAfter } from './pause.js';
 
 interface AniSkipResult {
   interval?: { startTime?: number; endTime?: number };
@@ -70,6 +71,9 @@ function closestRelease(
     : best;
 }
 
+/** Per base URL: a self-hosted mirror has its own limit. */
+const pause = providerPause('aniskip-pause', 'AniSkip');
+
 async function query(
   lookup: SegmentLookup,
   ctx: ProviderContext,
@@ -79,6 +83,7 @@ async function query(
   for (const type of REQUESTED) params.append('types', type);
   params.set('episodeLength', String(episodeLength));
   const base = ctx.baseUrl.replace(/\/+$/, '');
+  await pause.check(ctx.baseUrl);
   const response = await makeRequest(
     `${base}/v2/skip-times/${encodeURIComponent(String(lookup.ids.mal))}/${lookup.animeEpisode}?${params}`,
     {
@@ -89,6 +94,8 @@ async function query(
       },
     }
   );
+  if (response.status === 429)
+    await pause.start(ctx.baseUrl, retryAfter(response.headers));
   // 404 is its normal "nothing submitted", not a fault. A rate limit or a
   // server error is thrown so it is not remembered as a miss.
   if (response.status === 429 || response.status >= 500)
