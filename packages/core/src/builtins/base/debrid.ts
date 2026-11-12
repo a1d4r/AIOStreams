@@ -985,8 +985,7 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
             )
           : undefined,
       nzbUrl: torrentOrNzb.type === 'usenet' ? torrentOrNzb.nzb : undefined,
-      infoUrl:
-        torrentOrNzb.type === 'usenet' ? torrentOrNzb.infoUrl : undefined,
+      infoUrl: torrentOrNzb.infoUrl,
       releaseKey:
         torrentOrNzb.type === 'usenet' ? torrentOrNzb.releaseKey : undefined,
       idMatched: torrentOrNzb.confirmed === true ? true : undefined,

@@ -133,6 +133,7 @@ export class StremioTransformer {
             size: stream.size,
             folderSize: stream.folderSize,
             nzbUrl: stream.nzbUrl,
+            infoUrl: stream.infoUrl,
             releaseKey: stream.releaseKey,
             torrent: stream.torrent,
             addon: stream.addon.name,

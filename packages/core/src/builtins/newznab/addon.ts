@@ -17,7 +17,7 @@ import {
   NabAddonConfig,
   parseNabParsedFileInfo,
 } from '../base/nab/addon.js';
-import { ageInHoursSince } from '../utils/general.js';
+import { ageInHoursSince, parseIndexerInfoUrl } from '../utils/general.js';
 import { BuiltinProxy, createProxy } from '../../proxy/index.js';
 import type { BuiltinServiceId } from '../../utils/index.js';
 import type { Stream } from '../../db/index.js';
@@ -209,8 +209,7 @@ export class NewznabAddon extends BaseNabAddon<NewznabAddonConfig, NewznabApi> {
           0,
         type: 'usenet',
         parsedMediaInfo,
-        // As Prowlarr does: https://github.com/Prowlarr/Prowlarr/blob/3c6e1d97ac485a70cc9d4063dd5d17af7a77584d/src/NzbDrone.Core/Indexers/Definitions/Newznab/NewznabRssParser.cs#L123-L126
-        infoUrl: result.comments?.replace(/#comments$/, ''),
+        infoUrl: parseIndexerInfoUrl(result.comments),
       };
 
       const keySize =

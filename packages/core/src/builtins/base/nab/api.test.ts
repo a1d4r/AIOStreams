@@ -1,7 +1,15 @@
-import { describe, it } from 'node:test';
+import { before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import '../../torznab/addon.js';
-import { extractTorznabInfoHash, TorznabSearchResultItem } from './api.js';
+import { createLogger } from '../../../utils/index.js';
+import { settingsStore } from '../../../config/index.js';
+import { SettingsRepository } from '../../../db/repositories/settings.js';
+import {
+  BaseNabApi,
+  extractTorznabInfoHash,
+  TorznabSearchResultItem,
+} from './api.js';
+import { NabScanner, type NabScanProfile } from './scan.js';
 
 const VALID_HASH = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 /** Base32 BTIH encoding of VALID_HASH, per BEP 3. */
@@ -130,5 +138,43 @@ describe('extractTorznabInfoHash', () => {
       ],
     });
     assert.equal(extractTorznabInfoHash(result), VALID_HASH);
+  });
+});
+
+describe('Torznab scan profile', () => {
+  before(async () => {
+    mock.method(SettingsRepository, 'getAll', async () => []);
+    mock.method(SettingsRepository, 'getVersion', async () => 0);
+    await settingsStore.initialise();
+  });
+
+  // Trimmed from a JacRed response: <comments> sits between <link> and <pubDate>.
+  const body = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+<channel>
+<item>
+<title>Venom (2018) HDRip</title>
+<guid>http://rutor.info/torrent/669136</guid>
+<link>magnet:?xt=urn:btih:${VALID_HASH}</link>
+<comments>http://rutor.info/torrent/669136/venom_venom-2018-hdrip</comments>
+<pubDate>Sat, 01 Dec 2018 00:00:00 +0000</pubDate>
+<torznab:attr name="seeders" value="12" />
+</item>
+</channel>
+</rss>`);
+
+  it('reads <comments>', async () => {
+    const api = new BaseNabApi(
+      'torznab',
+      createLogger('test'),
+      'https://jacred.example'
+    );
+    const { profile } = api as unknown as { profile: NabScanProfile };
+    const document = await new NabScanner(body).scanSearch(profile);
+    assert.equal(document.kind, 'search');
+    assert.equal(
+      document.kind === 'search' ? document.results[0].comments : undefined,
+      'http://rutor.info/torrent/669136/venom_venom-2018-hdrip'
+    );
   });
 });

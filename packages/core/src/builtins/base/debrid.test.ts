@@ -5,8 +5,9 @@ import '../../index.js';
 import { BaseDebridAddon, type SearchMetadata } from './debrid.js';
 import StreamParser from '../../parser/streams.js';
 import { BuiltinStreamParser } from '../../presets/builtin.js';
+import { StremioTransformer } from '../../transformers/stremio.js';
 import type { Addon } from '../../db/schemas.js';
-import type { Stream, ParsedStream } from '../../db/schemas.js';
+import type { Stream, ParsedStream, UserData } from '../../db/schemas.js';
 import type {
   TorrentWithSelectedFile,
   NZBWithSelectedFile,
@@ -297,5 +298,69 @@ describe('BaseDebridAddon title language queries', () => {
       assert.deepEqual(brat2Queries('en'), ['brother 2 2000']);
       await setLatinOnly(true);
     });
+  });
+});
+
+describe('BaseDebridAddon info URL', () => {
+  before(async () => {
+    mock.method(SettingsRepository, 'getAll', async () => []);
+    mock.method(SettingsRepository, 'getVersion', async () => 0);
+    await settingsStore.initialise();
+  });
+
+  const infoUrl = 'http://rutor.info/torrent/669136/venom_venom-2018-hdrip';
+  const debridTorrent: TorrentWithSelectedFile = {
+    ...makeTorrent(),
+    service: { id: 'torbox', cached: true, library: false },
+  };
+
+  it('carries a torrent info URL to the /stream response', async () => {
+    const stream = addon._createStream(
+      { ...debridTorrent, infoUrl },
+      'tt0000001',
+      { torbox: 'auth' }
+    );
+    assert.equal(stream.infoUrl, infoUrl);
+
+    const testAddon = {
+      instanceId: 'torznab',
+      name: 'Torznab',
+      manifestUrl: 'https://example.com/manifest.json',
+      enabled: true,
+      timeout: 1000,
+      preset: { id: 'torznab', type: 'torznab', options: {} },
+    } as unknown as Addon;
+    const parsed = new BuiltinStreamParser(testAddon).parse(stream);
+    assert.ok(!('skip' in parsed));
+    assert.equal(parsed.infoUrl, infoUrl);
+
+    const userData = {
+      formatter: { id: 'torrentio' },
+      presets: [],
+      services: [],
+    } as unknown as UserData;
+    const response = await new StremioTransformer(userData).transformStreams(
+      {
+        success: true,
+        data: { streams: [parsed], statistics: [] },
+        errors: [],
+      },
+      { userData },
+      { provideStreamData: true, disableAutoplay: true }
+    );
+    assert.equal(response.streams[0].streamData?.infoUrl, infoUrl);
+  });
+
+  it('keeps the info URL out of the playback URL', () => {
+    const withInfoUrl = addon._createStream(
+      { ...debridTorrent, infoUrl },
+      'tt0000001',
+      { torbox: 'auth' }
+    );
+    const without = addon._createStream(debridTorrent, 'tt0000001', {
+      torbox: 'auth',
+    });
+    assert.ok(without.url);
+    assert.equal(withInfoUrl.url, without.url);
   });
 });
