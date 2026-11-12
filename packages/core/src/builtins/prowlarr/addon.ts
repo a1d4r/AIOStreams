@@ -16,7 +16,11 @@ import {
   extractTrackersFromMagnet,
   validateInfoHash,
 } from '../utils/debrid.js';
-import { createQueryLimit, getTitleLanguagesForUrl } from '../utils/general.js';
+import {
+  createQueryLimit,
+  getTitleLanguagesForUrl,
+  parseIndexerInfoUrl,
+} from '../utils/general.js';
 import { hashNzbUrl } from '../../debrid/utils.js';
 
 export const ProwlarrAddonConfigSchema = BaseDebridConfigSchema.extend({
@@ -256,6 +260,7 @@ export class ProwlarrAddon extends BaseDebridAddon<ProwlarrAddonConfig> {
         hash: infoHash,
         guid: result.guid,
         downloadUrl: downloadUrl,
+        infoUrl: parseIndexerInfoUrl(result.infoUrl),
         sources: magnetUrl ? extractTrackersFromMagnet(magnetUrl) : [],
         seeders: result.seeders,
         title: result.title,
@@ -292,7 +297,7 @@ export class ProwlarrAddon extends BaseDebridAddon<ProwlarrAddonConfig> {
         size: result.size,
         indexer: result.indexer,
         type: 'usenet',
-        infoUrl: result.infoUrl,
+        infoUrl: parseIndexerInfoUrl(result.infoUrl),
       });
     }
     return nzbs;

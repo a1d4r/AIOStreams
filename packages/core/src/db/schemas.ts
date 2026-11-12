@@ -1884,6 +1884,7 @@ export const AIOStream = StreamSchema.extend({
       indexer: z.string().optional(),
       age: z.number().or(z.string()).optional(), // Age in hours since upload
       nzbUrl: z.string().or(z.null()).optional(),
+      infoUrl: z.string().or(z.null()).optional(),
       releaseKey: ReleaseKeySchema,
       torrent: z
         .object({

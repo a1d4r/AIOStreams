@@ -16,6 +16,37 @@ export function ageInHoursSince(date: string): number | undefined {
   return Math.ceil(diffMs / (1000 * 60 * 60));
 }
 
+const MAX_INFO_URL_LENGTH = 2048;
+
+/**
+ * An indexer's page for a release (Newznab/Torznab `<comments>`, Prowlarr
+ * `infoUrl`), without the `#comments` anchor Newznab feeds add, as Prowlarr
+ * does: https://github.com/Prowlarr/Prowlarr/blob/3c6e1d97ac485a70cc9d4063dd5d17af7a77584d/src/NzbDrone.Core/Indexers/Definitions/Newznab/NewznabRssParser.cs#L123-L126
+ *
+ * The value comes from a third-party indexer and is handed to clients, so only
+ * a well-formed http(s) URL without credentials is kept, as given (not
+ * re-encoded).
+ */
+export function parseIndexerInfoUrl(
+  value: string | undefined
+): string | undefined {
+  const url = value?.trim().replace(/#comments$/, '');
+  if (
+    !url ||
+    url.length > MAX_INFO_URL_LENGTH ||
+    /[\s\u0000-\u001f\u007f]/.test(url) ||
+    !URL.canParse(url)
+  ) {
+    return undefined;
+  }
+  const parsed = new URL(url);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return undefined;
+  }
+  if (parsed.username || parsed.password) return undefined;
+  return url;
+}
+
 /**
  * Checks whether a raw release title contains one of the given air dates
  * ('YYYY-MM-DD')

@@ -61,7 +61,14 @@ export type Capabilities = {
  */
 const TORZNAB_PROFILE: NabScanProfile = {
   attrElement: 'torznab:attr',
-  fields: new Set<NabTextField>(['title', 'guid', 'pubDate', 'size', 'type']),
+  fields: new Set<NabTextField>([
+    'title',
+    'guid',
+    'comments',
+    'pubDate',
+    'size',
+    'type',
+  ]),
   indexers: new Set(['prowlarrindexer', 'jackettindexer'] as const),
   enclosureLength: false,
   attrs: new Map<string, NabAttrType>([
@@ -96,7 +103,7 @@ interface NabSearchResultItemBase {
   title: string;
   /** Torznab only, but the base addon's duplicate-page check reads it. */
   guid?: string;
-  /** Newznab only: the indexer's info URL. */
+  /** The indexer's page for the release, sometimes with a `#comments` anchor. */
   comments?: string;
   pubDate?: string;
   size?: number;
