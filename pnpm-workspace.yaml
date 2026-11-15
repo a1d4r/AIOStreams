@@ -19,3 +19,6 @@ patchedDependencies:
   '@radix-ui/react-select@2.4.1': patches/@radix-ui__react-select@2.4.1.patch
   stremthru: patches/stremthru.patch
   yencode@1.2.4: patches/yencode@1.2.4.patch
+
+overrides:
+  "@aiostreams/release-parser": "file:vendor/aiostreams-release-parser-1.0.1-1630ef2.tgz"
