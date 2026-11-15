@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@aiostreams/release-parser': file:vendor/aiostreams-release-parser-1.0.1-1630ef2.tgz
+
 patchedDependencies:
   '@radix-ui/react-select@2.4.1': d5877dfee3b4986948b7211090292e1dd527de7c82a67db13ee2e5d39700d1e7
   stremthru: 5d59636029f2455cfc103c8b8206ce24ff67c7f7f77e6fb8ea3f65dca52105dd
@@ -44,8 +47,8 @@ importers:
         specifier: ^0.3.1
         version: 0.3.1
       '@aiostreams/release-parser':
-        specifier: ^1.0.1
-        version: 1.0.1
+        specifier: file:../../vendor/aiostreams-release-parser-1.0.1-1630ef2.tgz
+        version: file:vendor/aiostreams-release-parser-1.0.1-1630ef2.tgz
       '@torbox/torbox-api':
         specifier: github:viren070/torbox-sdk-js#dist
         version: https://codeload.github.com/viren070/torbox-sdk-js/tar.gz/82fb4eb14ccd3a0372fb445f796fa49527960cdd
@@ -733,8 +736,9 @@ packages:
   '@aiostreams/jassub@0.1.0':
     resolution: {integrity: sha512-Lmcom4pKcFlfMjL2a824AXyNte9xRNvWtXiLV/jasQNqgU3Ubc3NM8r+bGdu6R7OJPJWCGS+7bi4ZchSLwz5UA==}
 
-  '@aiostreams/release-parser@1.0.1':
-    resolution: {integrity: sha512-gWkU+TOtOCHa28lR7pYUtEpi5XLAVzedfotrehdLjaAUnYFwRewG10DwdPWjAmY1Xn5i2+VNXxa5C/eWZhhREQ==}
+  '@aiostreams/release-parser@file:vendor/aiostreams-release-parser-1.0.1-1630ef2.tgz':
+    resolution: {integrity: sha512-VCxtbhJY4e3kHOlwbUyu0IKV4llTHonFy+BsZRNxKRgS9s4BCYhM9PqTlzGAwswSIoG1UUhdf+xqPPhnCVfaAA==, tarball: file:vendor/aiostreams-release-parser-1.0.1-1630ef2.tgz}
+    version: 1.0.1
 
   '@aiostreams/seanime-extensions@0.10.3':
     resolution: {integrity: sha512-1yoLXMz6DPyVRaeR8gY/mGYLQR3DdhcYOcPCI32vj8VJY0GfOdZxzMP+bCoU4EHY0lZmsa821P/ZZk95hG944Q==}
@@ -8177,7 +8181,7 @@ snapshots:
       rvfc-polyfill: 1.0.8
       throughput: 1.0.2
 
-  '@aiostreams/release-parser@1.0.1': {}
+  '@aiostreams/release-parser@file:vendor/aiostreams-release-parser-1.0.1-1630ef2.tgz': {}
 
   '@aiostreams/seanime-extensions@0.10.3': {}
 
