@@ -1177,11 +1177,16 @@ class StreamFilterer {
         return true;
       }
 
-      // if the requested content is a movie and season/episode is present, filter out
+      // A movie result with a season, or with more than two episodes, is a show.
+      // Up to two episode numbers without a season are the film's own:
+      // "Episode 1" of a saga, "(2 серии из 2)" of a two-part film, "(1 из 1)".
+      // Two numbers over a span of years are a duology: "John Wick 1-2 (2014-2017)".
+      const movieEpisodes = stream.parsedFile?.episodes?.length ?? 0;
       if (
         type === 'movie' &&
         (stream.parsedFile?.seasons?.length ||
-          stream.parsedFile?.episodes?.length)
+          movieEpisodes > 2 ||
+          (movieEpisodes === 2 && stream.parsedFile?.year?.includes('-')))
       ) {
         return false;
       }
