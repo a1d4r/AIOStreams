@@ -15,6 +15,7 @@ import {
 } from '../utils/index.js';
 import { Preset } from './preset.js';
 import { releaseKeyKind } from '../release-blocklist/keys.js';
+import { dropUnsetAudioLang } from '../media-info/unset-lang.js';
 import { stremthruSpecialCases } from './stremthru.js';
 
 export class BuiltinStreamParser extends StreamParser {
@@ -61,7 +62,11 @@ export class BuiltinStreamParser extends StreamParser {
         parsedStream.bitrate = provided.bitrate;
     }
 
-    const providedParsedMediaInfo = normaliseParsedMediaInfo(provided);
+    const providedParsedMediaInfo = dropUnsetAudioLang(
+      normaliseParsedMediaInfo(provided),
+      parsedStream.filename,
+      parsedStream.folderName
+    );
 
     const merged = mergeParsedFiles(fileParsed, folderParsed, {
       ...providedParsedMediaInfo,
