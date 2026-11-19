@@ -8,6 +8,7 @@ import {
   BuiltinServiceId,
 } from '../utils/index.js';
 import { layerMediaInfo } from '../media-info/apply.js';
+import { dropUnsetAudioLang } from '../media-info/unset-lang.js';
 import {
   Torrent,
   BuiltinDebridServices,
@@ -472,7 +473,11 @@ async function buildDebridStreams(
       if (parsedMediaInfo) {
         debridStream.parsedFile = layerMediaInfo(
           original?.parsedFile,
-          parsedMediaInfo
+          dropUnsetAudioLang(
+            parsedMediaInfo,
+            debridStream.filename,
+            debridStream.folderName
+          )
         );
         debridStream.duration =
           parsedMediaInfo.duration != null

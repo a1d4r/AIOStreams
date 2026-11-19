@@ -5,6 +5,7 @@ import {
   mergeVisualTags,
   parseMediaInfo,
 } from '../utils/index.js';
+import { dropUnsetAudioLang } from './unset-lang.js';
 import type { MediaInfoRecord } from './record.js';
 import { toWireMediaInfo } from './wire.js';
 
@@ -30,12 +31,17 @@ export function layerMediaInfo(
 }
 
 export function applyMediaInfo(
-  stream: Pick<ParsedStream, 'parsedFile' | 'duration' | 'bitrate'>,
+  stream: Pick<ParsedStream, 'parsedFile' | 'duration' | 'bitrate'> &
+    Partial<Pick<ParsedStream, 'filename' | 'folderName'>>,
   record: MediaInfoRecord
 ): void {
   stream.parsedFile = layerMediaInfo(
     stream.parsedFile,
-    parseMediaInfo(toWireMediaInfo(record))
+    dropUnsetAudioLang(
+      parseMediaInfo(toWireMediaInfo(record)),
+      stream.filename,
+      stream.folderName
+    )
   );
   if (record.duration && !stream.duration) {
     stream.duration = Math.round(record.duration * 1000);
