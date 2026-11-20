@@ -116,6 +116,37 @@ describe('processTorrentsForP2P', () => {
       assert.equal(results.length, 1);
     });
 
+    it('drops an early dubbed release without a Latin name (R3)', async () => {
+      const results = await processTorrentsForP2P(
+        [
+          makeTorrent('Красота (2026) S01E01 WEB-DL | ПМ', {
+            age: hoursAgo('2026-01-22'),
+          }),
+        ],
+        krasota
+      );
+      assert.equal(results.length, 0);
+    });
+
+    it("keeps a Russian title's release older than TMDB's first date", async () => {
+      // TMDB dates «Империя» by a rerun (04.11.2022); «Пётр I» aired in June
+      const results = await processTorrentsForP2P(
+        [
+          makeTorrent(
+            'Империя (Петр I) (1-4 серии из 4) / 2022 / РУ, СТ / DVB',
+            { age: hoursAgo('2022-06-12') }
+          ),
+        ],
+        {
+          ...krasota,
+          titles: ['Империя'],
+          year: 2022,
+          releaseDate: '2022-11-04',
+        }
+      );
+      assert.equal(results.length, 1);
+    });
+
     it('keeps an ID-matched release whatever its date and tags', async () => {
       const results = await processTorrentsForP2P(
         [

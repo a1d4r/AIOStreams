@@ -32,7 +32,7 @@ import {
 } from '../../debrid/index.js';
 import {
   hasTranslationOfRussianOriginal,
-  isPublishedBeforeRelease,
+  isOlderNamesake,
 } from '../../debrid/namesake.js';
 import { ParsedResult } from '@aiostreams/release-parser';
 import { parseTorrentTitleCached } from '../../parser/title.js';
@@ -74,7 +74,7 @@ function getValidationFailureReason(
   if (confirmed !== true) {
     if (isCountryWrong(parsed, metadata)) return 'country';
     // a namesake of the same year whose name passes the check below
-    if (isPublishedBeforeRelease(ageHours, metadata)) {
+    if (isOlderNamesake(rawTitle, ageHours, metadata)) {
       logger.debug('Dropping a release older than the title', { rawTitle });
       return 'title';
     }
