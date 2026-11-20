@@ -34,3 +34,30 @@ export function isPublishedBeforeRelease(
   if (Number.isNaN(released)) return false;
   return now - ageHours * HOUR_MS < released - RELEASE_SLACK_MS;
 }
+
+// Translation tags of Russian trackers: voice-over kinds (ПМ, ДБ, MVO...) and
+// the studios that only dub foreign content.
+const TRANSLATION =
+  /(?<!\p{L})(ПМ|ПД|ДБ|ЛМ|ЛО|АП|MVO|DVO|AVO|Дубляж|Дублированный|Многоголосый|Двухголосый|Одноголосый|Авторский|Профессиональный|LostFilm|HDrezka|Ukr)(?!\p{L})/iu;
+// The tracker's own sign of Russian-original audio: kinozal's "/ РУ /",
+// rutracker's "Original (Rus...)". Such a release may list a dub as well.
+const RUSSIAN_ORIGINAL =
+  /\/\s*РУ(?![\p{L}])|(?:Original|Оригинал)\s*\(?\s*(?:Rus|Рус)/iu;
+// A subtitle list ("Sub (Rus, Ukr, Eng)", "Sub Ukr") names no translation.
+const SUBTITLES = /(?<!\p{L})(?:Subs?|Субтитры)(?!\p{L})[^|+/\])]*\)?/giu;
+
+/**
+ * A Russian-language title needs no translation: a release that carries one,
+ * and no sign of Russian-original audio, is of a foreign namesake. JacRed's
+ * own voice list (" | [...].rus", TorznabXmlFormatter.ItemXml of jacred-fdb)
+ * is left out, it is a guess of JacRed's.
+ */
+export function hasTranslationOfRussianOriginal(
+  rawTitle: string | undefined,
+  metadata: TitleMetadata
+): boolean {
+  if (metadata.originalLanguage !== 'ru' || !rawTitle) return false;
+  const name = rawTitle.split(' | [')[0];
+  if (RUSSIAN_ORIGINAL.test(name)) return false;
+  return TRANSLATION.test(name.replace(SUBTITLES, ''));
+}

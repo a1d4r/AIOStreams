@@ -93,6 +93,14 @@ describe('processTorrentsForP2P', () => {
       assert.equal(results.length, 0);
     });
 
+    it('drops a translated release of a Russian-language title', async () => {
+      const results = await processTorrentsForP2P(
+        [makeTorrent('Красота / The Beauty (2026) S01E01 WEB-DL 1080p | ПМ')],
+        krasota
+      );
+      assert.equal(results.length, 0);
+    });
+
     it("keeps the title's own release", async () => {
       const results = await processTorrentsForP2P(
         [

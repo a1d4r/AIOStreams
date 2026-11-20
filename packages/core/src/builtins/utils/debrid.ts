@@ -30,7 +30,10 @@ import {
   sentNzbHash,
   parseFileNames,
 } from '../../debrid/index.js';
-import { isPublishedBeforeRelease } from '../../debrid/namesake.js';
+import {
+  hasTranslationOfRussianOriginal,
+  isPublishedBeforeRelease,
+} from '../../debrid/namesake.js';
 import { ParsedResult } from '@aiostreams/release-parser';
 import { parseTorrentTitleCached } from '../../parser/title.js';
 import {
@@ -73,6 +76,12 @@ function getValidationFailureReason(
     // a namesake of the same year whose name passes the check below
     if (isPublishedBeforeRelease(ageHours, metadata)) {
       logger.debug('Dropping a release older than the title', { rawTitle });
+      return 'title';
+    }
+    if (hasTranslationOfRussianOriginal(rawTitle, metadata)) {
+      logger.debug('Dropping a translated release of a Russian title', {
+        rawTitle,
+      });
       return 'title';
     }
     if (normTitles !== null) {
