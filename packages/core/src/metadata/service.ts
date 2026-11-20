@@ -42,6 +42,45 @@ import { SkyhookMetadata } from './skyhook.js';
 
 const logger = createLogger('metadata-service');
 
+/** How long a movie's Cinemeta lookup may still run once TMDB has answered. */
+export const MOVIE_CINEMETA_GRACE_MS = 1000;
+
+/**
+ * A movie takes its title, year, release date and runtime from TMDB first,
+ * and its IMDb title from the IMDb suggestion lookup, so once TMDB has a
+ * title and a year a slow Cinemeta (up to its 5 s timeout) costs more than
+ * its answer is worth: at most one more alias and genres. Otherwise
+ * Cinemeta is waited for as before.
+ */
+function withoutSlowCinemeta<T>(
+  cinemeta: Promise<T>,
+  tmdb: Promise<{ title?: string; year?: number } | undefined>,
+  fullId: string
+): Promise<T | undefined> {
+  let settled = false;
+  cinemeta.then(
+    () => (settled = true),
+    () => (settled = true)
+  );
+  const tmdbAnswered = tmdb.then(
+    (value) =>
+      value?.title && Number.isFinite(value.year)
+        ? new Promise<undefined>((resolve) =>
+            setTimeout(() => {
+              if (!settled) {
+                logger.debug(
+                  `Not waiting any longer for Cinemeta for ${fullId}`
+                );
+              }
+              resolve(undefined);
+            }, MOVIE_CINEMETA_GRACE_MS)
+          )
+        : cinemeta,
+    () => cinemeta
+  );
+  return Promise.race([cinemeta, tmdbAnswered]);
+}
+
 export interface MetadataServiceConfig {
   tmdbAccessToken?: string;
   tmdbApiKey?: string;
@@ -128,18 +167,16 @@ export class MetadataService {
             const parsedIdForTmdb = idForTmdb
               ? IdParser.parse(idForTmdb, type)
               : null;
-            if (parsedIdForTmdb && tmdbAvailable) {
-              promises.push(
-                (async () => {
-                  return new TMDBMetadata({
-                    accessToken: this.config.tmdbAccessToken,
-                    apiKey: this.config.tmdbApiKey,
-                  }).getMetadata(parsedIdForTmdb);
-                })()
-              );
-            } else {
-              promises.push(Promise.resolve(undefined));
-            }
+            const tmdbPromise =
+              parsedIdForTmdb && tmdbAvailable
+                ? (async () => {
+                    return new TMDBMetadata({
+                      accessToken: this.config.tmdbAccessToken,
+                      apiKey: this.config.tmdbApiKey,
+                    }).getMetadata(parsedIdForTmdb);
+                  })()
+                : Promise.resolve(undefined);
+            promises.push(tmdbPromise);
 
             // TVDB metadata
             const idForTvdb = tvdbId
@@ -174,10 +211,10 @@ export class MetadataService {
               const ownId = animeEntry?.mappings?.imdbId?.toString();
               promises.push(
                 (async () => {
-                  const meta = await imdbMetadata.getCinemetaData(
-                    hintedId,
-                    type
-                  );
+                  const lookup = imdbMetadata.getCinemetaData(hintedId, type);
+                  const meta = await (type === 'movie'
+                    ? withoutSlowCinemeta(lookup, tmdbPromise, id.fullId)
+                    : lookup);
                   // hints can name an IMDb entry Cinemeta has no aired episode for
                   const hasEpisode = meta?.videos?.some(
                     (v) =>
