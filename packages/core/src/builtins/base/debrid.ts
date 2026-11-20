@@ -546,6 +546,23 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
       const selected = new Set<string>();
       // native-script queries are wanted only when they are not dropped below
       const preferNonLatin = !appConfig.builtins.scrape.latinQueriesOnly;
+      // whether a spec took the Russian title of Russian-language content
+      let nativeRussian = false;
+      // whether a spec's cleaned title is the primary title's very string, so
+      // that dropping the primary title would drop that spec's query too
+      let primaryAsked = false;
+      const noteSpecTitle = (match: MetadataTitle, lang: string) => {
+        if (cleanTitle(match.title, lang) === metadata.primaryTitle) {
+          primaryAsked = true;
+        }
+        if (
+          lang === 'ru' &&
+          metadata.originalLanguage === 'ru' &&
+          !isPredominantlyLatin(match.title)
+        ) {
+          nativeRussian = true;
+        }
+      };
       for (const spec of titleLangs) {
         if (spec === 'default') {
           selected.add(metadata.primaryTitle);
@@ -563,8 +580,10 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
                 preferNonLatin
               )
             : undefined;
-          if (match)
+          if (match) {
             selected.add(cleanTitle(match.title, metadata.originalLanguage));
+            noteSpecTitle(match, metadata.originalLanguage!);
+          }
         } else if (spec === 'scene') {
           metadata.sceneTitles
             ?.slice(0, appConfig.builtins.scrape.titleLimit)
@@ -576,8 +595,19 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
             spec,
             preferNonLatin
           );
-          if (match) selected.add(cleanTitle(match.title, spec));
+          if (match) {
+            selected.add(cleanTitle(match.title, spec));
+            noteSpecTitle(match, spec);
+          }
         }
+      }
+      // Russian-language content searched by its Russian title is not searched
+      // under the translated primary title too: on Russian trackers the
+      // translation finds namesakes ("Trap" for the series "Западня"), and the
+      // title's own releases carry the Russian name anyway. Not while queries
+      // are Latin-only: the Russian one is dropped below.
+      if (preferNonLatin && nativeRussian && !primaryAsked) {
+        selected.delete(metadata.primaryTitle);
       }
       titles = [...selected];
       // Always fall back to primary title if nothing matched

@@ -289,14 +289,109 @@ describe('BaseDebridAddon title language queries', () => {
 
     it('takes the native-script title once non-Latin queries are allowed', async () => {
       await setLatinOnly(false);
-      assert.deepEqual(brat2Queries('ru'), ['brother 2 2000', 'брат 2 2000']);
-      assert.deepEqual(brat2Queries('original'), [
-        'brother 2 2000',
-        'брат 2 2000',
-      ]);
+      // and not the translated primary title next to it (below)
+      assert.deepEqual(brat2Queries('ru'), ['брат 2 2000']);
+      assert.deepEqual(brat2Queries('original'), ['брат 2 2000']);
       // a Latin-script language is unaffected
       assert.deepEqual(brat2Queries('en'), ['brother 2 2000']);
       await setLatinOnly(true);
+    });
+  });
+
+  describe('the translated primary title next to the native original', () => {
+    // «Западня» (2024, ru): TMDB en-US «Trap» finds the film «Trap» (2024).
+    const zapadnya = deduplicateTitles(
+      [
+        { title: 'Trap', language: 'en', trusted: true },
+        { title: 'Западня', language: 'ru', trusted: true },
+      ],
+      'ru'
+    );
+    const zapadnyaMetadata = {
+      primaryTitle: 'Trap',
+      titles: zapadnya.map((t) => t.title),
+      titlesWithLang: zapadnya,
+      originalLanguage: 'ru',
+      year: 2024,
+    } as SearchMetadata;
+    const series = (meta: SearchMetadata, specs: string[]) =>
+      queryBuilder.buildQueries(
+        { mediaType: 'series', season: '1', episode: '1' } as ParsedId,
+        meta,
+        { titleLanguages: specs }
+      );
+
+    it('is not searched', async () => {
+      await setLatinOnly(false);
+      const queries = series(zapadnyaMetadata, ['default', 'ru']);
+      assert.ok(queries.length > 0);
+      assert.ok(
+        queries.every((q) => q.startsWith('западня')),
+        `${queries}`
+      );
+      await setLatinOnly(true);
+    });
+
+    it('is searched for a foreign title', async () => {
+      await setLatinOnly(false);
+      const queries = series({ ...zapadnyaMetadata, originalLanguage: 'en' }, [
+        'default',
+        'ru',
+      ]);
+      assert.ok(
+        queries.some((q) => q.startsWith('Trap')),
+        `${queries}`
+      );
+      assert.ok(
+        queries.some((q) => q.startsWith('западня')),
+        `${queries}`
+      );
+      await setLatinOnly(true);
+    });
+
+    it('is searched for a title of another non-Latin language', async () => {
+      await setLatinOnly(false);
+      const anime = deduplicateTitles(
+        [
+          { title: 'Frieren', language: 'en', trusted: true },
+          { title: '葬送のフリーレン', language: 'ja', trusted: true },
+        ],
+        'ja'
+      );
+      const queries = series(
+        {
+          ...zapadnyaMetadata,
+          primaryTitle: 'Frieren',
+          titles: anime.map((t) => t.title),
+          titlesWithLang: anime,
+          originalLanguage: 'ja',
+        },
+        ['default', 'ja']
+      );
+      assert.ok(
+        queries.some((q) => q.startsWith('Frieren')),
+        `${queries}`
+      );
+      await setLatinOnly(true);
+    });
+
+    it('is searched when a language spec asks for it too', async () => {
+      await setLatinOnly(false);
+      const queries = series(zapadnyaMetadata, ['default', 'en', 'ru']);
+      assert.ok(
+        queries.some((q) => /^trap/i.test(q)),
+        `${queries}`
+      );
+      await setLatinOnly(true);
+    });
+
+    it('is searched while queries are Latin-only', async () => {
+      await setLatinOnly(true);
+      const queries = series(zapadnyaMetadata, ['default', 'ru']);
+      assert.ok(
+        queries.some((q) => q.startsWith('Trap')),
+        `${queries}`
+      );
     });
   });
 });
