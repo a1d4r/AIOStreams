@@ -30,6 +30,7 @@ import {
   sentNzbHash,
   parseFileNames,
 } from '../../debrid/index.js';
+import { isPublishedBeforeRelease } from '../../debrid/namesake.js';
 import { ParsedResult } from '@aiostreams/release-parser';
 import { parseTorrentTitleCached } from '../../parser/title.js';
 import {
@@ -64,10 +65,16 @@ function getValidationFailureReason(
   parsed: ParsedResult,
   metadata: Metadata,
   confirmed: boolean | undefined,
-  normTitles: Set<string> | null
+  normTitles: Set<string> | null,
+  ageHours?: number
 ): 'country' | 'title' | 'season' | 'episode' | null {
   if (confirmed !== true) {
     if (isCountryWrong(parsed, metadata)) return 'country';
+    // a namesake of the same year whose name passes the check below
+    if (isPublishedBeforeRelease(ageHours, metadata)) {
+      logger.debug('Dropping a release older than the title', { rawTitle });
+      return 'title';
+    }
     if (normTitles !== null) {
       const preprocessedTitle = preprocessTitle(
         parsed.title ?? '',
@@ -115,7 +122,8 @@ export function filterTorrentsFailingValidation<T extends UnprocessedTorrent>(
       parsed,
       metadata,
       torrent.confirmed,
-      normTitles
+      normTitles,
+      torrent.age
     );
   });
 
@@ -374,7 +382,8 @@ async function processTorrentsForDebridService(
         parsedTorrent,
         metadata,
         torrent.confirmed,
-        normTitles
+        normTitles,
+        torrent.age
       );
       if (reason === 'country' || reason === 'title') {
         filteredTitle++;
@@ -525,7 +534,8 @@ export async function processTorrentsForP2P(
         parsedTorrent,
         metadata,
         torrent.confirmed,
-        normTitles
+        normTitles,
+        torrent.age
       )
     ) {
       continue;
@@ -755,7 +765,8 @@ async function processNZBsForDebridService(
         parsedNzb,
         metadata,
         nzb.confirmed,
-        normTitles
+        normTitles,
+        nzb.age
       );
       if (reason) {
         continue;

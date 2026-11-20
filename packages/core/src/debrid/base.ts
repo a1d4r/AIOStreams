@@ -226,6 +226,8 @@ const TitleMetadataSchema = z.object({
   airDates: z.array(z.string()).optional(),
   isDateBased: z.boolean().optional(),
   originalLanguage: z.string().optional(),
+  // the title's first date ('YYYY-MM-DD'): a movie's release, a series' first air date
+  releaseDate: z.string().optional(),
 });
 
 const BasePlaybackInfoSchema = z.object({

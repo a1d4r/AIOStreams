@@ -65,6 +65,63 @@ describe('processTorrentsForP2P', () => {
     assert.equal(results.length, 0);
   });
 
+  describe('a namesake of the same year found by a text search', () => {
+    // «Красота» (2026), TMDB en-US «Beauty»: «The Beauty» passes the title check.
+    const krasota: TitleMetadata = {
+      titles: ['Красота', 'Beauty'],
+      year: 2026,
+      season: 1,
+      episode: 1,
+      originalLanguage: 'ru',
+      releaseDate: '2026-10-30',
+    };
+    const hoursAgo = (date: string) =>
+      (Date.now() - Date.parse(date)) / 3_600_000;
+
+    it('drops a release published long before the premiere', async () => {
+      const results = await processTorrentsForP2P(
+        [
+          makeTorrent(
+            'Красота / The Beauty / Сезон: 1 / Серии: 1-3 из 11 (2026)',
+            {
+              age: hoursAgo('2026-01-22'),
+            }
+          ),
+        ],
+        krasota
+      );
+      assert.equal(results.length, 0);
+    });
+
+    it("keeps the title's own release", async () => {
+      const results = await processTorrentsForP2P(
+        [
+          makeTorrent(
+            'Красота (1 сезон: 1-3 серии из 8) / 2026 / РУ / WEB-DL (1080p)',
+            {
+              age: hoursAgo('2026-10-30'),
+            }
+          ),
+        ],
+        krasota
+      );
+      assert.equal(results.length, 1);
+    });
+
+    it('keeps an ID-matched release whatever its date and tags', async () => {
+      const results = await processTorrentsForP2P(
+        [
+          makeTorrent('Красота / The Beauty (2026) S01E01 | ПМ', {
+            confirmed: true,
+            age: hoursAgo('2026-01-22'),
+          }),
+        ],
+        krasota
+      );
+      assert.equal(results.length, 1);
+    });
+  });
+
   it('picks the episode file when the torrent lists its files', async () => {
     const files = [1, 2, 3].map((episode) => ({
       index: episode - 1,

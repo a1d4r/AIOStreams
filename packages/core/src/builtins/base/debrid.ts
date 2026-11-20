@@ -59,6 +59,7 @@ import { cleanTitle, normaliseTitle } from '../../parser/utils.js';
 import { NzbDavConfig, NzbDAVService } from '../../debrid/nzbdav.js';
 import { AltmountConfig, AltmountService } from '../../debrid/altmount.js';
 import { formatHours } from '../../formatters/utils.js';
+import { firstReleaseDate } from '../../debrid/namesake.js';
 
 export interface SearchMetadata extends TitleMetadata {
   primaryTitle?: string;
@@ -867,6 +868,10 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
       titles: metadata.titles?.map((t) => t.title) ?? [],
       titlesWithLang: metadata.titles ?? [],
       originalLanguage: metadata.originalLanguage,
+      releaseDate: firstReleaseDate(
+        metadata.releaseDate,
+        metadata.firstAiredDate
+      ),
       season: parsedId.season ? Number(parsedId.season) : undefined,
       episode: parsedId.episode ? Number(parsedId.episode) : undefined,
       absoluteEpisode,
