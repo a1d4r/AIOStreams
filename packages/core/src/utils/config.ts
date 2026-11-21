@@ -1497,7 +1497,7 @@ const FILTER_FIELDS: (keyof UserData)[] = [
   'excludeSeederRange', 'includeSeederRange', 'requiredSeederRange', 'seederRangeTypes',
   'excludeAgeRange', 'includeAgeRange', 'requiredAgeRange', 'ageRangeTypes',
   'digitalReleaseFilter', 'size', 'bitrate', 'titleMatching', 'yearMatching', 'seasonEpisodeMatching', 'episodeTitleMatching',
-  'languageInference'
+  'softMatching', 'languageInference'
 ];
 
 // prettier-ignore

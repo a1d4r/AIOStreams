@@ -1098,6 +1098,14 @@ export const UserDataSchema = z.object({
       addons: z.array(z.string()).optional(),
     })
     .optional(),
+  // Keep the results that a check of the requested title would remove (year
+  // and title matching, the built-in addons' checks of text search results),
+  // marked as unconfirmed and placed after the other results.
+  softMatching: z
+    .object({
+      enabled: z.boolean().optional(),
+    })
+    .optional(),
   languageInference: z
     .object({
       enabled: z.boolean().optional(),
@@ -1346,12 +1354,28 @@ export const ReleaseKeySchema = z
   .optional()
   .catch(undefined);
 
+/**
+ * Why a result soft matching kept failed to match the requested title: the
+ * first check that failed, with what it compared. Years are whole numbers,
+ * dates 'YYYY-MM-DD'.
+ */
+export const UnconfirmedSchema = z.object({
+  reason: z.enum(['year', 'title', 'date', 'dub']),
+  releaseYear: z.number().int().optional(),
+  titleYear: z.number().int().optional(),
+  titleYearEnd: z.number().int().optional(),
+  releaseDate: z.string().optional(),
+  titleDate: z.string().optional(),
+});
+export type Unconfirmed = z.infer<typeof UnconfirmedSchema>;
+
 export const StreamSchema = z.looseObject({
   url: z.string().or(z.null()).optional(),
   nzbUrl: z.string().or(z.null()).optional(),
   infoUrl: z.string().or(z.null()).optional(),
   releaseKey: ReleaseKeySchema,
   idMatched: z.boolean().optional(),
+  unconfirmed: UnconfirmedSchema.optional().catch(undefined),
   servers: z.array(z.string().min(1)).nullable().optional(),
   rarUrls: z.array(SourceSchema).nullable().optional(),
   zipUrls: z.array(SourceSchema).nullable().optional(),
@@ -1526,6 +1550,8 @@ export const ParsedStreamSchema = z.object({
   library: z.boolean().optional(),
   /** Upstream matched this release against an ID-indexed source, not a text search. */
   idMatched: z.boolean().optional(),
+  /** Set by soft matching: the result failed a check of the title or year. */
+  unconfirmed: UnconfirmedSchema.optional(),
   seadex: z
     .object({
       isBest: z.boolean(),
@@ -1907,6 +1933,7 @@ export const AIOStream = StreamSchema.extend({
           })
         )
         .optional(),
+      unconfirmed: UnconfirmedSchema.optional().catch(undefined),
       id: z.string().min(1).optional(),
     })
     .optional(),
