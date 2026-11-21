@@ -533,6 +533,21 @@ export async function processStreams(
   };
 }
 
+/**
+ * The streams a background selector (precache, preload) picks. Soft
+ * matching's unconfirmed results may be of another title, so it gets none.
+ */
+export async function selectBackgroundStreams(
+  streams: ParsedStream[],
+  selector: string,
+  context: StreamContext
+): Promise<ParsedStream[]> {
+  return new StreamSelector(context.toExpressionContext()).select(
+    streams.filter((s) => !s.unconfirmed),
+    selector
+  );
+}
+
 async function precacheNextEpisode(
   ctx: AIOStreamsContext,
   context: StreamContext
@@ -593,8 +608,11 @@ async function precacheNextEpisode(
   const selector =
     ctx.userData.precacheSelector || constants.DEFAULT_PRECACHE_SELECTOR;
   try {
-    const streamSelector = new StreamSelector(context.toExpressionContext());
-    selectedStreams = await streamSelector.select(nextStreams, selector);
+    selectedStreams = await selectBackgroundStreams(
+      nextStreams,
+      selector,
+      context
+    );
     logger.debug(
       { selector, resultCount: selectedStreams.length },
       'precache selector evaluated'
@@ -923,13 +941,12 @@ export async function getStreams(
       const preloadSelector =
         ctx.userData.preloadStreams.selector ??
         constants.DEFAULT_PRELOAD_SELECTOR;
-      const streamSelector = new StreamSelector(context.toExpressionContext());
       let streamsToPreload: ParsedStream[];
       const preloadSingleStream =
         ctx.userData.preloadStreams?.singleStream !== false;
       try {
         streamsToPreload = (
-          await streamSelector.select(finalStreams, preloadSelector)
+          await selectBackgroundStreams(finalStreams, preloadSelector, context)
         )
           .filter((s) => s.url)
           .slice(

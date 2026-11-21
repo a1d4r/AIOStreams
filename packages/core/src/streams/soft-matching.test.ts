@@ -6,7 +6,10 @@ import StreamLimiter from './limiter.js';
 import StreamDeduplicator from './deduplicator.js';
 import FileParser from '../parser/file.js';
 import { StremioTransformer } from '../transformers/stremio.js';
-import { IdParser } from '../utils/index.js';
+import { IdParser, constants } from '../utils/index.js';
+import { buildPlayChain } from '../main/play-chain.js';
+import { selectBackgroundStreams } from '../main/resources.js';
+import { PLAYBACK_PATH_PREFIX } from '../debrid/utils.js';
 import type { ParsedStream, Unconfirmed, UserData } from '../db/schemas.js';
 
 function makeStream(
@@ -409,6 +412,66 @@ describe('unconfirmed copies in the deduplicator', () => {
     );
     // each unconfirmed result counted once
     assert.deepEqual(on.statistics.included.unconfirmed.details, { year: 2 });
+  });
+});
+
+describe('unconfirmed results in the background', () => {
+  const debrid = (id: string, cached: boolean, extra = {}) =>
+    makeStream(`Film.${id}.2160p.WEB-DL.mkv`, {
+      id,
+      type: 'debrid',
+      url: `https://aio.example${PLAYBACK_PATH_PREFIX}auth/key/file/tt0000001/${id}.mkv`,
+      service: { id: 'realdebrid', cached },
+      ...extra,
+    });
+
+  it('are not precached', async () => {
+    const selected = await selectBackgroundStreams(
+      [debrid('a', true, { unconfirmed: year }), debrid('b', false)],
+      constants.DEFAULT_PRECACHE_SELECTOR,
+      context('series', show)
+    );
+    assert.deepEqual(
+      selected.map((s) => s.id),
+      ['b']
+    );
+  });
+
+  it('are not preloaded', async () => {
+    const selected = await selectBackgroundStreams(
+      [debrid('a', true), debrid('b', true, { unconfirmed: year })],
+      constants.DEFAULT_PRELOAD_SELECTOR,
+      context('movie', film)
+    );
+    assert.deepEqual(
+      selected.map((s) => s.id),
+      ['a']
+    );
+  });
+
+  it('are not in a failover chain', async () => {
+    const streams = [
+      debrid('a', true),
+      debrid('b', true, { unconfirmed: year }),
+    ];
+    const urls = streams.map((s) => s.url);
+    // one result left: no chain to build, no url stamped
+    await buildPlayChain(streams, {
+      maxAttempts: 3,
+      contentTypes: ['debrid'],
+      allowCrossType: false,
+      parallel: 1,
+      staggerMs: 0,
+      preferredGraceMs: 0,
+      maxWaitMs: 0,
+      sameReleaseLimit: 0,
+      duplicateStaggerMs: 0,
+      onlySameReleaseFailover: false,
+    } as Parameters<typeof buildPlayChain>[1]);
+    assert.deepEqual(
+      streams.map((s) => s.url),
+      urls
+    );
   });
 });
 

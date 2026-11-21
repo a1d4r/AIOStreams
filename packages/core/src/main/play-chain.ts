@@ -169,10 +169,13 @@ export async function buildPlayChain(
   // Preserve sorted order; the clicked item's index into this list is what its
   // fallback key encodes. Owned items are re-resolved in-process; external items
   // (when enabled) are probed.
+  // Soft matching's unconfirmed results may be of another title: neither
+  // tried for a result nor given a chain of their own.
   const eligible = streams.filter(
     (s) =>
-      isOwnedPlayback(s) ||
-      (opts.includeExternal && isExternalDebridFailover(s))
+      !s.unconfirmed &&
+      (isOwnedPlayback(s) ||
+        (opts.includeExternal && isExternalDebridFailover(s)))
   );
 
   const items: PlayChainItem[] = eligible.map((s) => {
