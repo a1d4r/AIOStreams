@@ -1,4 +1,4 @@
-import { ParsedStream, UserData } from '../db/schemas.js';
+import { ParsedStream, Unconfirmed, UserData } from '../db/schemas.js';
 import {
   createLogger,
   RegexAccess,
@@ -116,6 +116,8 @@ export interface FilterStatistics {
     regex: Reason;
     keywords: Reason;
     streamExpression: Reason;
+    /** Kept by soft matching, by the first check of the title it failed. */
+    unconfirmed: Reason;
   };
 }
 
@@ -165,6 +167,8 @@ class StreamFilterer {
   /** Ids of streams that survived filter() only through an included stream
    *  expression, pending re-evaluation on the aggregated set. */
   private expressionRescuedIds = new Set<string>();
+  /** Unconfirmed streams counted: a stream may be filtered again. */
+  private countedUnconfirmedIds = new Set<string>();
   /** filter() runs many times per request; the title caches key on identity. */
   private requestedTitleStrings = new WeakMap<ExtendedMetadata, string[]>();
 
@@ -234,6 +238,7 @@ class StreamFilterer {
         regex: { total: 0, details: {} },
         keywords: { total: 0, details: {} },
         streamExpression: { total: 0, details: {} },
+        unconfirmed: { total: 0, details: {} },
       },
     };
     this.filterTimings = {
@@ -1144,6 +1149,23 @@ class StreamFilterer {
       return overlaps(requestedYearRange[0], requestedYearRange[1]);
     };
 
+    const softMatching = this.userData.softMatching?.enabled === true;
+    const yearMismatch = (stream: ParsedStream): Unconfirmed => {
+      const mark: Unconfirmed = { reason: 'year' };
+      // the first year of a range ("2012-2020")
+      const releaseYear = parseInt(stream.parsedFile?.year ?? '');
+      const { year, yearEnd } = requestedMetadata ?? {};
+      if (Number.isInteger(releaseYear)) mark.releaseYear = releaseYear;
+      if (Number.isInteger(year)) mark.titleYear = year;
+      if (Number.isInteger(yearEnd) && yearEnd !== year) {
+        mark.titleYearEnd = yearEnd;
+      }
+      return mark;
+    };
+    // Set by shouldKeepStream under soft matching: the first check of the
+    // title the stream failed.
+    let softFailure: Unconfirmed | undefined;
+
     const performSeasonEpisodeMatch = (stream: ParsedStream) => {
       const seasonEpisodeMatchingOptions = this.userData.seasonEpisodeMatching;
       if (
@@ -1538,6 +1560,7 @@ class StreamFilterer {
     };
 
     const shouldKeepStream = (stream: ParsedStream): boolean => {
+      softFailure = undefined;
       if (
         resultAgeCheck &&
         stream.age !== undefined &&
@@ -2321,7 +2344,9 @@ class StreamFilterer {
         const _ymStart = Date.now();
         const _ymResult = performYearMatch(stream);
         accumPhase(phases.yearMatch, Date.now() - _ymStart);
-        if (!_ymResult) {
+        if (!_ymResult && softMatching) {
+          softFailure ??= yearMismatch(stream);
+        } else if (!_ymResult) {
           this.incrementRemovalReason(
             'yearMatching',
             `${stream.parsedFile?.title || 'Unknown Title'} - ${stream.parsedFile?.year || 'Unknown Year'}`
@@ -2372,7 +2397,9 @@ class StreamFilterer {
         const _tmStart = Date.now();
         const _tmResult = performTitleMatch(stream);
         accumPhase(phases.titleMatch, Date.now() - _tmStart);
-        if (!_tmResult) {
+        if (!_tmResult && softMatching) {
+          softFailure ??= { reason: 'title' };
+        } else if (!_tmResult) {
           this.incrementRemovalReason(
             'titleMatching',
             `${stream.parsedFile?.title || 'Unknown Title'}${stream.parsedFile?.country ? ` (${stream.parsedFile.country})` : ''}${type === 'movie' ? ` - (${stream.parsedFile?.year || 'Unknown Year'})` : ''}`
@@ -2563,7 +2590,14 @@ class StreamFilterer {
         await new Promise((resolve) => setImmediate(resolve));
         filterSliceStart = performance.now();
       }
-      if (shouldKeepStream(stream)) filteredStreams.push(stream);
+      if (!shouldKeepStream(stream)) continue;
+      // a mark of an earlier stage (a built-in addon's) names an earlier check
+      if (softFailure && !stream.unconfirmed) stream.unconfirmed = softFailure;
+      if (stream.unconfirmed && !this.countedUnconfirmedIds.has(stream.id)) {
+        this.countedUnconfirmedIds.add(stream.id);
+        this.incrementIncludedReason('unconfirmed', stream.unconfirmed.reason);
+      }
+      filteredStreams.push(stream);
     }
     filterPassMs = Date.now() - filterPassStart;
 
