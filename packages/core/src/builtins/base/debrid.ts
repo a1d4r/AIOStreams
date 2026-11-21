@@ -117,6 +117,7 @@ export const BaseDebridConfigSchema = z.object({
   cacheAndPlay: CacheAndPlaySchema.optional(),
   autoRemoveDownloads: z.boolean().optional(),
   checkOwned: z.boolean().optional().default(true),
+  softMatching: z.boolean().optional(),
 });
 export type BaseDebridConfig = z.infer<typeof BaseDebridConfigSchema>;
 
@@ -292,7 +293,8 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
     const torrentsToDownload = filterTorrentsFailingValidation(
       torrentResults.filter((t) => !t.hash && t.downloadUrl),
       searchMetadata,
-      '.torrent download'
+      '.torrent download',
+      this.userData.softMatching
     );
     torrentResults = torrentResults.filter((t) => t.hash);
     if (torrentsToDownload.length > 0) {
@@ -361,7 +363,8 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
       p2p
         ? processTorrentsForP2P(
             torrentResults as Torrent[],
-            searchMetadata
+            searchMetadata,
+            this.userData.softMatching
           ).then((results) => ({ results, errors: [] }))
         : processTorrents(
             torrentResults as Torrent[],
@@ -369,7 +372,8 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
             id,
             searchMetadata,
             this.clientIp,
-            this.userData.checkOwned
+            this.userData.checkOwned,
+            this.userData.softMatching
           ),
       processNZBs(
         nzbResults,
@@ -379,7 +383,8 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
         id,
         searchMetadata,
         this.clientIp,
-        this.userData.checkOwned
+        this.userData.checkOwned,
+        this.userData.softMatching
       ),
     ]);
 
@@ -1023,6 +1028,7 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
       releaseKey:
         torrentOrNzb.type === 'usenet' ? torrentOrNzb.releaseKey : undefined,
       idMatched: torrentOrNzb.confirmed === true ? true : undefined,
+      unconfirmed: torrentOrNzb.unconfirmed,
       servers:
         torrentOrNzb.service?.id === 'stremio_nntp'
           ? (encryptedStoreAuth as string[])

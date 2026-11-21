@@ -1,5 +1,11 @@
 import bytes from 'bytes';
-import { Stream, ParsedStream, Addon, ParsedFile } from '../db/index.js';
+import {
+  Stream,
+  ParsedStream,
+  Addon,
+  ParsedFile,
+  Unconfirmed,
+} from '../db/index.js';
 import {
   constants,
   createLogger,
@@ -96,6 +102,10 @@ class StreamParser {
     return undefined;
   }
 
+  protected getUnconfirmed(stream: Stream): Unconfirmed | undefined {
+    return undefined;
+  }
+
   parse(stream: Stream): ParsedStream | { skip: true } {
     if (this.shouldSkip(stream)) {
       return { skip: true };
@@ -116,6 +126,7 @@ class StreamParser {
       infoUrl: stream.infoUrl || undefined,
       releaseKey: this.getReleaseKey(stream),
       idMatched: this.getIdMatched(stream),
+      unconfirmed: this.getUnconfirmed(stream),
       tarUrls: stream.tarUrls ?? undefined,
       tgzUrls: stream.tgzUrls ?? undefined,
       '7zipUrls': stream['7zipUrls'] ?? undefined,

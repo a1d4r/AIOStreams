@@ -76,4 +76,19 @@ describe('Torznab preset', () => {
       ['torbox']
     );
   });
+
+  it('passes soft matching on only when it is enabled', async () => {
+    const config = async (softMatching?: { enabled: boolean }) =>
+      manifestConfig(
+        (
+          await TorznabPreset.generateAddons(
+            { services: [], softMatching } as unknown as UserData,
+            options
+          )
+        )[0].manifestUrl
+      );
+    assert.equal((await config({ enabled: true })).softMatching, true);
+    assert.equal('softMatching' in (await config({ enabled: false })), false);
+    assert.equal('softMatching' in (await config()), false);
+  });
 });

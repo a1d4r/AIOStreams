@@ -1,4 +1,4 @@
-import { ParsedStream, Stream, UserData } from '../db/index.js';
+import { ParsedStream, Stream, Unconfirmed, UserData } from '../db/index.js';
 import { StreamParser, getRegexForTextAfterEmojis } from '../parser/index.js';
 import FileParser from '../parser/file.js';
 import {
@@ -27,6 +27,10 @@ export class BuiltinStreamParser extends StreamParser {
 
   protected override getIdMatched(stream: Stream): boolean | undefined {
     return stream.idMatched === true ? true : undefined;
+  }
+
+  protected override getUnconfirmed(stream: Stream): Unconfirmed | undefined {
+    return stream.unconfirmed;
   }
 
   protected override getLanguages(
@@ -309,6 +313,7 @@ export class BuiltinAddonPreset extends Preset {
       cacheAndPlay: userData.cacheAndPlay,
       autoRemoveDownloads: userData.autoRemoveDownloads,
       checkOwned: userData.checkOwned ?? true,
+      softMatching: userData.softMatching?.enabled || undefined,
     };
   }
 }

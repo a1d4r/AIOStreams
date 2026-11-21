@@ -28,11 +28,30 @@ export function isPublishedBeforeRelease(
   metadata: TitleMetadata,
   now: number = Date.now()
 ): boolean {
-  if (ageHours === undefined || !Number.isFinite(ageHours)) return false;
-  if (!metadata.releaseDate) return false;
+  return publishedBeforeRelease(ageHours, metadata, now) !== undefined;
+}
+
+/** The dates of a release published before the title, as 'YYYY-MM-DD'. */
+export interface NamesakeDates {
+  releaseDate: string;
+  titleDate: string;
+}
+
+function publishedBeforeRelease(
+  ageHours: number | undefined,
+  metadata: TitleMetadata,
+  now: number
+): NamesakeDates | undefined {
+  if (ageHours === undefined || !Number.isFinite(ageHours)) return undefined;
+  if (!metadata.releaseDate) return undefined;
   const released = Date.parse(metadata.releaseDate);
-  if (Number.isNaN(released)) return false;
-  return now - ageHours * HOUR_MS < released - RELEASE_SLACK_MS;
+  if (Number.isNaN(released)) return undefined;
+  const published = now - ageHours * HOUR_MS;
+  if (published >= released - RELEASE_SLACK_MS) return undefined;
+  return {
+    releaseDate: new Date(published).toISOString().slice(0, 10),
+    titleDate: metadata.releaseDate.slice(0, 10),
+  };
 }
 
 // A Russian tracker names a foreign release in Latin script too: after « / »
@@ -105,17 +124,18 @@ export function hasLatinName(rawTitle: string): boolean {
  * on TMDB is May 2014, its trackers' SATRip December 2013), so for a
  * Russian-language title the release must also name itself in Latin script,
  * as a foreign namesake on a Russian tracker does. A dubbed one without a
- * Latin name is dropped by hasTranslationOfRussianOriginal.
+ * Latin name is dropped by hasTranslationOfRussianOriginal. Gives the dates
+ * it compared.
  */
 export function isOlderNamesake(
   rawTitle: string | undefined,
   ageHours: number | undefined,
   metadata: TitleMetadata,
   now: number = Date.now()
-): boolean {
-  if (!isPublishedBeforeRelease(ageHours, metadata, now)) return false;
-  if (metadata.originalLanguage !== 'ru') return true;
-  return !!rawTitle && hasLatinName(rawTitle);
+): NamesakeDates | undefined {
+  const dates = publishedBeforeRelease(ageHours, metadata, now);
+  if (!dates || metadata.originalLanguage !== 'ru') return dates;
+  return rawTitle && hasLatinName(rawTitle) ? dates : undefined;
 }
 
 // Translation tags of Russian trackers: voice-over kinds (ПМ, ДБ, MVO...) and

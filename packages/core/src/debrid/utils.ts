@@ -1,4 +1,5 @@
 ﻿import { z } from 'zod';
+import type { Unconfirmed } from '../db/schemas.js';
 import {
   constants,
   createLogger,
@@ -211,6 +212,7 @@ interface BaseFile {
   downloadvolumefactor?: number; // multiplier for the download volume that counts toward the user’s account on the tracker
   library?: boolean; // whether the file is already in the user's library
   infoUrl?: string; // the indexer's page for the release
+  unconfirmed?: Unconfirmed; // kept by soft matching though it failed a check of the title
 }
 
 export interface Torrent extends BaseFile {

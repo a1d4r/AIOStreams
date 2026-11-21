@@ -34,6 +34,7 @@ import {
   hasTranslationOfRussianOriginal,
   isOlderNamesake,
 } from '../../debrid/namesake.js';
+import type { Unconfirmed } from '../../db/schemas.js';
 import { ParsedResult } from '@aiostreams/release-parser';
 import { parseTorrentTitleCached } from '../../parser/title.js';
 import {
@@ -63,44 +64,71 @@ export function extractTrackersFromMagnet(magnet: string): string[] {
     .filter((tracker) => tracker.trim() !== '');
 }
 
-function getValidationFailureReason(
+type ValidationFailure =
+  | { drop: 'country' | 'title' | 'season' | 'episode' }
+  // kept by soft matching
+  | { unconfirmed: Unconfirmed };
+
+/** The first check of the title a text search result fails, if any. */
+function getTitleMismatch(
+  rawTitle: string | undefined,
+  parsed: ParsedResult,
+  metadata: Metadata,
+  normTitles: Set<string> | null,
+  ageHours?: number
+): { drop: 'country' | 'title'; unconfirmed: Unconfirmed } | undefined {
+  if (isCountryWrong(parsed, metadata)) {
+    return { drop: 'country', unconfirmed: { reason: 'title' } };
+  }
+  // a namesake of the same year whose name passes the check below
+  const namesakeDates = isOlderNamesake(rawTitle, ageHours, metadata);
+  if (namesakeDates) {
+    logger.debug('Release is older than the title', { rawTitle });
+    return { drop: 'title', unconfirmed: { reason: 'date', ...namesakeDates } };
+  }
+  if (hasTranslationOfRussianOriginal(rawTitle, metadata)) {
+    logger.debug('Release is a translation of a Russian title', {
+      rawTitle,
+    });
+    return { drop: 'title', unconfirmed: { reason: 'dub' } };
+  }
+  if (normTitles !== null) {
+    const preprocessedTitle = preprocessTitle(
+      parsed.title ?? '',
+      [rawTitle],
+      metadata.titles
+    );
+    if (
+      !normTitles.has(normaliseTitle(preprocessedTitle)) &&
+      isTitleWrong({ title: preprocessedTitle }, metadata)
+    ) {
+      return { drop: 'title', unconfirmed: { reason: 'title' } };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * With soft matching a result of another title is kept, marked unconfirmed,
+ * unless it also fails the season or episode check.
+ */
+function getValidationFailure(
   rawTitle: string | undefined,
   parsed: ParsedResult,
   metadata: Metadata,
   confirmed: boolean | undefined,
   normTitles: Set<string> | null,
-  ageHours?: number
-): 'country' | 'title' | 'season' | 'episode' | null {
-  if (confirmed !== true) {
-    if (isCountryWrong(parsed, metadata)) return 'country';
-    // a namesake of the same year whose name passes the check below
-    if (isOlderNamesake(rawTitle, ageHours, metadata)) {
-      logger.debug('Dropping a release older than the title', { rawTitle });
-      return 'title';
-    }
-    if (hasTranslationOfRussianOriginal(rawTitle, metadata)) {
-      logger.debug('Dropping a translated release of a Russian title', {
-        rawTitle,
-      });
-      return 'title';
-    }
-    if (normTitles !== null) {
-      const preprocessedTitle = preprocessTitle(
-        parsed.title ?? '',
-        [rawTitle],
-        metadata.titles
-      );
-      if (
-        !normTitles.has(normaliseTitle(preprocessedTitle)) &&
-        isTitleWrong({ title: preprocessedTitle }, metadata)
-      ) {
-        return 'title';
-      }
-    }
-  }
-  if (isSeasonWrong(parsed, metadata)) return 'season';
-  if (isEpisodeWrong(parsed, metadata)) return 'episode';
-  return null;
+  ageHours: number | undefined,
+  softMatching: boolean
+): ValidationFailure | null {
+  const mismatch =
+    confirmed !== true
+      ? getTitleMismatch(rawTitle, parsed, metadata, normTitles, ageHours)
+      : undefined;
+  if (mismatch && !softMatching) return { drop: mismatch.drop };
+  if (isSeasonWrong(parsed, metadata)) return { drop: 'season' };
+  if (isEpisodeWrong(parsed, metadata)) return { drop: 'episode' };
+  return mismatch ? { unconfirmed: mismatch.unconfirmed } : null;
 }
 
 // Drops what the validation in processTorrentsForDebridService would discard
@@ -108,7 +136,8 @@ function getValidationFailureReason(
 export function filterTorrentsFailingValidation<T extends UnprocessedTorrent>(
   torrents: T[],
   metadata: Metadata | undefined,
-  stage: string
+  stage: string,
+  softMatching: boolean = false
 ): T[] {
   if (!metadata || torrents.length === 0) return torrents;
 
@@ -126,14 +155,16 @@ export function filterTorrentsFailingValidation<T extends UnprocessedTorrent>(
   const filtered = torrents.filter((torrent) => {
     const parsed = parsedTitlesMap.get(torrent.title ?? '');
     if (!parsed) return true;
-    return !getValidationFailureReason(
+    const failure = getValidationFailure(
       torrent.title,
       parsed,
       metadata,
       torrent.confirmed,
       normTitles,
-      torrent.age
+      torrent.age,
+      softMatching
     );
+    return !failure || !('drop' in failure);
   });
 
   if (filtered.length < torrents.length) {
@@ -152,7 +183,8 @@ export async function processTorrents(
   stremioId: string,
   metadata?: Metadata,
   clientIp?: string,
-  checkOwned: boolean = true
+  checkOwned: boolean = true,
+  softMatching: boolean = false
 ): Promise<{
   results: TorrentWithSelectedFile[];
   errors: { serviceId: BuiltinServiceId; error: Error }[];
@@ -189,7 +221,8 @@ export async function processTorrents(
   torrents = filterTorrentsFailingValidation(
     torrents,
     metadata,
-    'debrid check'
+    'debrid check',
+    softMatching
   );
 
   // Run all service checks in parallel and collect both results and errors
@@ -202,7 +235,8 @@ export async function processTorrents(
         metadata,
         clientIp,
         checkOwned,
-        sharedParsedTitlesMap
+        sharedParsedTitlesMap,
+        softMatching
       );
       return { serviceId: service.id, ...serviceResult, error: null };
     } catch (error) {
@@ -277,7 +311,8 @@ async function processTorrentsForDebridService(
   metadata?: Metadata,
   clientIp?: string,
   checkOwned: boolean = true,
-  sharedParsedTitlesMap?: Map<string, ParsedResult>
+  sharedParsedTitlesMap?: Map<string, ParsedResult>,
+  softMatching: boolean = false
 ): Promise<{
   results: TorrentWithSelectedFile[];
   magnetCheckMs: number;
@@ -375,7 +410,7 @@ async function processTorrentsForDebridService(
     magnetCheckResult: DebridDownload | undefined;
     parsedTitle: ParsedResult;
   }[] = [];
-  for (const torrent of torrents) {
+  for (let torrent of torrents) {
     const magnetCheckResult = magnetCheckMap.get(torrent.hash);
     if (magnetCheckResult?.status === 'failed') {
       filteredFailed++;
@@ -386,23 +421,24 @@ async function processTorrentsForDebridService(
     );
 
     if (metadata && parsedTorrent) {
-      const reason = getValidationFailureReason(
+      const failure = getValidationFailure(
         torrent.title ?? magnetCheckResult?.name,
         parsedTorrent,
         metadata,
         torrent.confirmed,
         normTitles,
-        torrent.age
+        torrent.age,
+        softMatching
       );
-      if (reason === 'country' || reason === 'title') {
+      if (failure && 'unconfirmed' in failure) {
+        torrent = { ...torrent, unconfirmed: failure.unconfirmed };
+      } else if (failure?.drop === 'country' || failure?.drop === 'title') {
         filteredTitle++;
         continue;
-      }
-      if (reason === 'season') {
+      } else if (failure?.drop === 'season') {
         filteredSeason++;
         continue;
-      }
-      if (reason === 'episode') {
+      } else if (failure?.drop === 'episode') {
         filteredEpisode++;
         continue;
       }
@@ -515,7 +551,8 @@ async function processTorrentsForDebridService(
 
 export async function processTorrentsForP2P(
   torrents: Torrent[],
-  metadata?: Metadata
+  metadata?: Metadata,
+  softMatching: boolean = false
 ): Promise<TorrentWithSelectedFile[]> {
   const results: TorrentWithSelectedFile[] = [];
 
@@ -533,21 +570,25 @@ export async function processTorrentsForP2P(
 
   // Filter torrents that pass validation checks
   const validTorrents: Torrent[] = [];
-  for (const torrent of torrents) {
+  for (let torrent of torrents) {
     const parsedTorrent = parsedTitlesMap.get(torrent.title ?? '');
-    if (
-      metadata &&
-      parsedTorrent &&
-      getValidationFailureReason(
-        torrent.title,
-        parsedTorrent,
-        metadata,
-        torrent.confirmed,
-        normTitles,
-        torrent.age
-      )
-    ) {
+    const failure =
+      metadata && parsedTorrent
+        ? getValidationFailure(
+            torrent.title,
+            parsedTorrent,
+            metadata,
+            torrent.confirmed,
+            normTitles,
+            torrent.age,
+            softMatching
+          )
+        : null;
+    if (failure && 'drop' in failure) {
       continue;
+    }
+    if (failure) {
+      torrent = { ...torrent, unconfirmed: failure.unconfirmed };
     }
     if (hasTooManySelectableFiles(torrent.files)) {
       logger.debug(`Skipping torrent with too many files to select from`, {
@@ -612,7 +653,8 @@ export async function processNZBs(
   stremioId: string,
   metadata?: Metadata,
   clientIp?: string,
-  checkOwned: boolean = true
+  checkOwned: boolean = true,
+  softMatching: boolean = false
 ): Promise<{
   results: NZBWithSelectedFile[];
   errors: { serviceId: BuiltinServiceId; error: Error }[];
@@ -641,7 +683,8 @@ export async function processNZBs(
         metadata,
         clientIp,
         checkOwned,
-        sharedParsedNzbTitlesMap
+        sharedParsedNzbTitlesMap,
+        softMatching
       );
       return { serviceId: service.id, results: serviceResults, error: null };
     } catch (error) {
@@ -674,7 +717,8 @@ async function processNZBsForDebridService(
   metadata?: Metadata,
   clientIp?: string,
   checkOwned: boolean = true,
-  sharedParsedTitlesMap?: Map<string, ParsedResult>
+  sharedParsedTitlesMap?: Map<string, ParsedResult>,
+  softMatching: boolean = false
 ): Promise<NZBWithSelectedFile[]> {
   const startTime = Date.now();
   const debridService = getDebridService(
@@ -755,7 +799,7 @@ async function processNZBsForDebridService(
     nzbCheckResult: DebridDownload | undefined;
     parsedTitle: ParsedResult;
   }[] = [];
-  for (const nzb of nzbs) {
+  for (let nzb of nzbs) {
     const nzbCheckResult = nzbCheckMap.get(nzb.hash ?? '');
     if (nzbCheckResult?.status === 'failed') {
       logger.debug(`Skipping NZB as its status is failed`, {
@@ -769,16 +813,20 @@ async function processNZBsForDebridService(
     );
 
     if (metadata && parsedNzb) {
-      const reason = getValidationFailureReason(
+      const failure = getValidationFailure(
         nzb.title ?? nzbCheckResult?.name,
         parsedNzb,
         metadata,
         nzb.confirmed,
         normTitles,
-        nzb.age
+        nzb.age,
+        softMatching
       );
-      if (reason) {
+      if (failure && 'drop' in failure) {
         continue;
+      }
+      if (failure) {
+        nzb = { ...nzb, unconfirmed: failure.unconfirmed };
       }
     }
 
