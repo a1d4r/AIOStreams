@@ -155,6 +155,7 @@ export class StremioTransformer {
               addon,
               cached,
             })),
+            ...(stream.unconfirmed ? { unconfirmed: stream.unconfirmed } : {}),
             id: stream.id,
           }
         : undefined,

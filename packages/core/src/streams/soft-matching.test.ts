@@ -411,3 +411,68 @@ describe('unconfirmed copies in the deduplicator', () => {
     assert.deepEqual(on.statistics.included.unconfirmed.details, { year: 2 });
   });
 });
+
+describe('unconfirmed results in the response', () => {
+  it('copies the mark to streamData, and no key without it', async () => {
+    const userData = {
+      formatter: { id: 'torrentio' },
+      presets: [],
+      services: [],
+    } as unknown as UserData;
+    const response = await new StremioTransformer(userData).transformStreams(
+      {
+        success: true,
+        data: {
+          streams: [
+            makeStream('Film (2011) WEB-DL 2160p'),
+            makeStream('Film (2006) WEB-DL 2160p', { unconfirmed: year }),
+          ],
+          statistics: [],
+        },
+        errors: [],
+      },
+      { userData },
+      { provideStreamData: true, disableAutoplay: true }
+    );
+    const [confirmed, unconfirmed] = JSON.parse(
+      JSON.stringify(response)
+    ).streams;
+    assert.equal('unconfirmed' in confirmed.streamData, false);
+    assert.deepEqual(unconfirmed.streamData.unconfirmed, year);
+  });
+
+  it('gives the formatter the reason', async () => {
+    const userData = {
+      formatter: {
+        id: 'custom',
+        definitions: {
+          custom: {
+            name: '{stream.unconfirmed::exists["? "||""]}{stream.unconfirmed}',
+            description: '',
+          },
+        },
+      },
+      presets: [],
+      services: [],
+    } as unknown as UserData;
+    const response = await new StremioTransformer(userData).transformStreams(
+      {
+        success: true,
+        data: {
+          streams: [
+            makeStream('Film (2011) WEB-DL 2160p'),
+            makeStream('Film (2006) WEB-DL 2160p', { unconfirmed: year }),
+          ],
+          statistics: [],
+        },
+        errors: [],
+      },
+      { userData },
+      { provideStreamData: false, disableAutoplay: true }
+    );
+    assert.deepEqual(
+      response.streams.map((s) => s.name),
+      ['', '? year']
+    );
+  });
+});
