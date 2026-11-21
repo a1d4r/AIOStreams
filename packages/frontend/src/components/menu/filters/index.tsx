@@ -2266,6 +2266,27 @@ function Content() {
                 </SettingsCard>
 
                 <SettingsCard
+                  id="softMatching"
+                  title="Soft Matching"
+                  description="Keep the streams that Year Matching or Title Matching would filter out, and the results of built-in addons whose title does not match. They are marked as unconfirmed (stream.unconfirmed in the formatter) and placed after all other streams, so result limits drop them first. Streams that fail any other filter, such as Season/Episode Matching, are still removed."
+                >
+                  <Switch
+                    label="Enable"
+                    side="right"
+                    value={userData.softMatching?.enabled ?? false}
+                    onValueChange={(value) => {
+                      setUserData((prev) => ({
+                        ...prev,
+                        softMatching: {
+                          ...(prev.softMatching || {}),
+                          enabled: value,
+                        },
+                      }));
+                    }}
+                  />
+                </SettingsCard>
+
+                <SettingsCard
                   id="languageInference"
                   title="Language Inference"
                   description="When a stream declares no language of its own, the language of the metadata title it matched is added to it. A source only contributes while its own filter is running, so Title needs Title Matching enabled and Episode Title needs Episode Title Matching enabled. Inference also happens after the language filters, so an inferred language reaches the formatter, sorting and stream expressions, but cannot be filtered on in the same request."
