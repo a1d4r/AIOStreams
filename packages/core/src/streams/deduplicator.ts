@@ -259,6 +259,27 @@ class StreamDeduplicator {
       finalDuplicateGroupsMap.get(representativeId)!.push(stream);
     }
 
+    // Soft matching: a result that passed the checks of the title has
+    // unconfirmed copies, which the checks would have removed. Remove them
+    // and group the rest again, so the confirmed results are deduplicated
+    // as without soft matching: a removed copy may have joined them.
+    const unconfirmedCopies = new Set(
+      Array.from(finalDuplicateGroupsMap.values()).flatMap((group) =>
+        group.some((stream) => !stream.unconfirmed)
+          ? group.filter((stream) => stream.unconfirmed)
+          : []
+      )
+    );
+    if (unconfirmedCopies.size > 0) {
+      logger.debug(
+        { removed: unconfirmedCopies.size },
+        'removed unconfirmed copies of confirmed results'
+      );
+      return this.deduplicate(
+        streams.filter((stream) => !unconfirmedCopies.has(stream))
+      );
+    }
+
     const processedStreams = new Set<ParsedStream>();
     for (const excludedStreamId of excludedStreamIds) {
       const stream = idToStreamMap.get(excludedStreamId);

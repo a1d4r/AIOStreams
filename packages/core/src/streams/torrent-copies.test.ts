@@ -5,8 +5,10 @@ import {
   shareCacheStatus,
   shareFileInfo,
   shareInfoHash,
+  shareTorrentCopies,
 } from './torrent-copies.js';
-import type { ParsedStream } from '../db/schemas.js';
+import StreamDeduplicator from './deduplicator.js';
+import type { ParsedStream, UserData } from '../db/schemas.js';
 
 function makeStream(
   infoHash: string | undefined,
@@ -731,5 +733,100 @@ describe('isRoundSize', () => {
     for (const size of [223946512868, 62378309238, 62122145270, 193450314699]) {
       assert.equal(isRoundSize(size), false, String(size));
     }
+  });
+});
+
+describe('unconfirmed copies (soft matching)', () => {
+  const hash = 'a'.repeat(40);
+  const year = { reason: 'year' as const };
+  const copy = (
+    id: string,
+    addon: string,
+    extra: Partial<ParsedStream>
+  ): ParsedStream =>
+    ({
+      id,
+      type: 'debrid',
+      filename: 'Film.2011.2160p.WEB-DL.mkv',
+      torrent: { infoHash: hash },
+      addon: {
+        instanceId: addon,
+        resultPassthrough: false,
+        preset: { id: addon },
+      },
+      ...extra,
+    }) as unknown as ParsedStream;
+  const userData = {
+    deduplicator: {
+      enabled: true,
+      multiGroupBehaviour: 'aggressive',
+      keys: ['filename', 'infoHash'],
+      cached: 'per_service',
+      uncached: 'single_result',
+      p2p: 'single_result',
+    },
+    presets: [{ instanceId: 'a' }, { instanceId: 'b' }, { instanceId: 'c' }],
+    services: [{ id: 'torbox', enabled: true }],
+  } as unknown as UserData;
+
+  // Without soft matching the unconfirmed copies are removed before any of
+  // this; the confirmed ones must come out the same.
+  async function assertMainListUnchanged(make: () => ParsedStream[]) {
+    const run = (streams: ParsedStream[]) => {
+      shareTorrentCopies(streams);
+      return new StreamDeduplicator(userData).deduplicate(streams);
+    };
+    const on = await run(make());
+    const off = await run(make().filter((s) => !s.unconfirmed));
+    assert.deepEqual(
+      on.filter((s) => !s.unconfirmed),
+      off
+    );
+    return on;
+  }
+
+  it('give no cached status to the confirmed copies', async () => {
+    const kept = await assertMainListUnchanged(() => [
+      copy('C', 'a', { service: { id: 'torbox', cached: false } }),
+      copy('U', 'b', {
+        service: { id: 'torbox', cached: true },
+        unconfirmed: year,
+      }),
+      copy('P', 'c', { type: 'p2p' }),
+    ]);
+    // the uncached copy does not hide the P2P one
+    assert.deepEqual(
+      kept.map((s) => s.id),
+      ['P']
+    );
+  });
+
+  it('give no infoHash to the confirmed copies', async () => {
+    const size = 20_123_456_789;
+    const kept = await assertMainListUnchanged(() => [
+      copy('M', 'a', {
+        torrent: {},
+        size,
+        service: { id: 'torbox', cached: true },
+      }),
+      copy('U', 'b', {
+        size,
+        service: { id: 'torbox', cached: true },
+        unconfirmed: year,
+      }),
+    ]);
+    assert.equal(kept[0].torrent?.infoHash, undefined);
+  });
+
+  it('take cached status from the confirmed copies', () => {
+    const unconfirmed = copy('U', 'b', {
+      service: { id: 'torbox', cached: false },
+      unconfirmed: year,
+    });
+    shareTorrentCopies([
+      copy('C', 'a', { service: { id: 'torbox', cached: true } }),
+      unconfirmed,
+    ]);
+    assert.equal(unconfirmed.service?.cached, true);
   });
 });

@@ -140,7 +140,17 @@ class StreamSorter {
       },
       'sort complete'
     );
-    return [...pinnedToTopStreams, ...sortedStreams, ...pinnedToBottomStreams];
+    const ordered = [
+      ...pinnedToTopStreams,
+      ...sortedStreams,
+      ...pinnedToBottomStreams,
+    ];
+    // Soft matching's unconfirmed results go after all others, in the same
+    // order, so the result limits drop them first.
+    return [
+      ...ordered.filter((stream) => !stream.unconfirmed),
+      ...ordered.filter((stream) => stream.unconfirmed),
+    ];
   }
 
   private dynamicSortKey(

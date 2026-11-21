@@ -193,3 +193,221 @@ describe('soft matching in the filterer', () => {
     assert.equal(kept[0].unconfirmed, undefined);
   });
 });
+
+const year: Unconfirmed = {
+  reason: 'year',
+  releaseYear: 2006,
+  titleYear: 2011,
+};
+
+describe('unconfirmed results in the order', () => {
+  it('go after all others and are limited first', async () => {
+    const userData = {
+      sortCriteria: { global: [] },
+      resultLimits: { global: 4 },
+    } as unknown as UserData;
+    const streams = [
+      makeStream('Film (2006) A', { unconfirmed: year }),
+      makeStream('Film (2011) B'),
+      makeStream('Film (2006) C', { unconfirmed: year }),
+      makeStream('Film (2006) D', { unconfirmed: year }),
+      makeStream('Film (2011) E'),
+      makeStream('Film (2006) F', { unconfirmed: year }),
+      makeStream('Film (2011) G'),
+      makeStream('Film (2006) H', { unconfirmed: year }),
+    ];
+    const sorted = await new StreamSorter(userData).sort(streams, {
+      type: 'movie',
+      isAnime: false,
+    } as any);
+    const limited = await new StreamLimiter(userData).limit(sorted);
+    assert.deepEqual(
+      limited.map((s) => s.filename),
+      ['Film (2011) B', 'Film (2011) E', 'Film (2011) G', 'Film (2006) A']
+    );
+  });
+});
+
+describe('unconfirmed copies in the deduplicator', () => {
+  const textSearch = makeStream('').addon;
+  const byId = {
+    instanceId: 'by-id',
+    name: 'By ID',
+    resultPassthrough: false,
+    preset: { id: 'by-id' },
+  } as ParsedStream['addon'];
+  // the text search first: it wins a tie of everything else
+  const presets = [{ instanceId: 'text-search' }, { instanceId: 'by-id' }];
+
+  function dedup(
+    deduplicator: Record<string, unknown>,
+    streams: ParsedStream[]
+  ) {
+    return new StreamDeduplicator({
+      deduplicator: { enabled: true, keys: ['filename'], ...deduplicator },
+      presets,
+      services: [
+        { id: 'realdebrid', enabled: true },
+        { id: 'torbox', enabled: true },
+      ],
+    } as unknown as UserData).deduplicate(streams);
+  }
+
+  // The confirmed results come out as without soft matching, where the
+  // filterer would have removed the unconfirmed ones.
+  async function assertMainListUnchanged(
+    deduplicator: Record<string, unknown>,
+    make: () => ParsedStream[]
+  ) {
+    const on = await dedup(deduplicator, make());
+    const off = await dedup(
+      deduplicator,
+      make().filter((s) => !s.unconfirmed)
+    );
+    assert.deepEqual(
+      on.filter((s) => !s.unconfirmed),
+      off
+    );
+    return on;
+  }
+
+  const stream = (
+    id: string,
+    filename: string,
+    extra: Partial<ParsedStream> = {}
+  ) => makeStream(filename, { id, ...extra });
+
+  it('keep the confirmed copy of a release: single_result', async () => {
+    const kept = await assertMainListUnchanged({ p2p: 'single_result' }, () => [
+      stream('a', 'Film.2006.2160p.WEB-DL.mkv', { unconfirmed: year }),
+      stream('b', 'Film.2006.2160p.WEB-DL.mkv', { addon: byId }),
+    ]);
+    assert.deepEqual(
+      kept.map((s) => s.id),
+      ['b']
+    );
+  });
+
+  it('keep the confirmed copy of a release: per_addon', async () => {
+    const kept = await assertMainListUnchanged({ p2p: 'per_addon' }, () => [
+      stream('a', 'Film.2006.2160p.WEB-DL.mkv', { unconfirmed: year }),
+      stream('b', 'Film.2006.2160p.WEB-DL.mkv', { addon: byId }),
+    ]);
+    assert.deepEqual(
+      kept.map((s) => s.id),
+      ['b']
+    );
+  });
+
+  it('keep the confirmed copy of a release: per_service', async () => {
+    const debrid = (service: string) =>
+      ({
+        type: 'debrid',
+        service: { id: service, cached: true },
+      }) as Partial<ParsedStream>;
+    const kept = await assertMainListUnchanged(
+      { cached: 'per_service' },
+      () => [
+        stream('a', 'Film.2006.2160p.WEB-DL.mkv', {
+          ...debrid('realdebrid'),
+          unconfirmed: year,
+        }),
+        stream('b', 'Film.2006.2160p.WEB-DL.mkv', {
+          ...debrid('realdebrid'),
+          addon: byId,
+        }),
+        stream('c', 'Film.2006.2160p.WEB-DL.mkv', {
+          ...debrid('torbox'),
+          unconfirmed: year,
+        }),
+      ]
+    );
+    assert.deepEqual(
+      kept.map((s) => s.id),
+      ['b']
+    );
+  });
+
+  it('keep the confirmed copy by size and tags, not a namesake', async () => {
+    const size = 20 * 1024 ** 3;
+    const kept = await assertMainListUnchanged(
+      { keys: ['smartDetect'], p2p: 'single_result' },
+      () => [
+        stream('a', 'Other.Film.2011.2160p.WEB-DL.mkv', {
+          size,
+          unconfirmed: { reason: 'title' },
+        }),
+        stream('b', 'Film.2011.2160p.WEB-DL.mkv', { size, addon: byId }),
+      ]
+    );
+    assert.deepEqual(
+      kept.map((s) => s.id),
+      ['b']
+    );
+  });
+
+  it('do not join confirmed results that are not copies', async () => {
+    const size = 20 * 1024 ** 3;
+    // the unconfirmed copy shares the name with one, size and tags with the other
+    const kept = await assertMainListUnchanged(
+      { keys: ['filename', 'smartDetect'], p2p: 'single_result' },
+      () => [
+        stream('a', 'Film.2011.1080p.WEB-DL.mkv', { size: size / 4 }),
+        stream('b', 'Film.2011.1080p.WEB-DL.mkv', {
+          size,
+          unconfirmed: year,
+        }),
+        stream('c', 'Film.2011.1080p.WEB-DL.Repack.mkv', {
+          size,
+          addon: byId,
+        }),
+      ]
+    );
+    assert.deepEqual(kept.map((s) => s.id).sort(), ['a', 'c']);
+  });
+
+  it('stay unconfirmed when no copy confirms them', async () => {
+    const kept = await dedup({ p2p: 'single_result' }, [
+      stream('a', 'Film.2006.2160p.WEB-DL.mkv', { unconfirmed: year }),
+      stream('b', 'Film.2006.2160p.WEB-DL.mkv', {
+        addon: byId,
+        unconfirmed: { reason: 'title' },
+      }),
+    ]);
+    assert.equal(kept.length, 1);
+    assert.ok(kept[0].unconfirmed);
+  });
+
+  it('stay out of the main list when filtered again', async () => {
+    const make = () => [
+      stream('a', 'Film (2006) WEB-DL 2160p'),
+      stream('b', 'Film (2006) WEB-DL 2160p', { addon: byId }),
+      stream('c', 'Film (2005) BDRip 1080p'),
+    ];
+    // a request filters and deduplicates twice: by addon, then all results
+    const run = async (softMatching: boolean) => {
+      const filterer = makeFilterer(softMatching);
+      let streams = make();
+      for (let pass = 0; pass < 2; pass++) {
+        streams = await filterFilm(filterer, streams);
+        streams = await dedup({ p2p: 'single_result' }, streams);
+      }
+      return { streams, statistics: filterer.getFilterStatistics() };
+    };
+    const on = await run(true);
+    const off = await run(false);
+    assert.deepEqual(
+      on.streams.filter((s) => !s.unconfirmed),
+      off.streams
+    );
+    assert.deepEqual(
+      on.streams.map((s) => [s.id, s.unconfirmed?.reason]),
+      [
+        ['b', undefined],
+        ['c', 'year'],
+      ]
+    );
+    // each unconfirmed result counted once
+    assert.deepEqual(on.statistics.included.unconfirmed.details, { year: 2 });
+  });
+});

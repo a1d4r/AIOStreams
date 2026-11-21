@@ -18,13 +18,17 @@ import { ParsedStream } from '../db/schemas.js';
  * the final dedup. Dedup then keys copies by the file they play
  * (torrentFileKeys) and, for copies still without an infoHash, trusts only
  * sizes counted to the byte (isRoundSize).
+ *
+ * Soft matching's unconfirmed copies may be of another title, and without
+ * soft matching they are removed: they take an infoHash and cached status
+ * from the other copies but give none, and take no part in shareFileInfo.
  */
 
 /** The three passes above, in their order. */
 export function shareTorrentCopies(streams: ParsedStream[]): void {
   shareInfoHash(streams);
   shareCacheStatus(streams);
-  shareFileInfo(streams);
+  shareFileInfo(streams.filter((stream) => !stream.unconfirmed));
 }
 
 /**
@@ -44,7 +48,9 @@ export function shareCacheStatus(streams: ParsedStream[]): void {
   const cachedKeys = new Set<string>();
   for (const stream of streams) {
     const key = keyOf(stream);
-    if (key && stream.service?.cached) cachedKeys.add(key);
+    if (key && stream.service?.cached && !stream.unconfirmed) {
+      cachedKeys.add(key);
+    }
   }
   if (cachedKeys.size === 0) return;
 
@@ -122,6 +128,7 @@ export function shareInfoHash(streams: ParsedStream[]): void {
     if (
       !hash ||
       sharedTo(stream) ||
+      stream.unconfirmed ||
       stream.type === 'usenet' ||
       stream.type === 'stremio-usenet'
     ) {
