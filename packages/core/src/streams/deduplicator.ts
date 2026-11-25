@@ -32,6 +32,168 @@ type TiebreakerCmp = (
 
 const logger = createLogger('deduplicator');
 
+// How far apart, as a fraction of the larger, the sizes of two torrents with
+// the same filename may be for the filename key to take them for one file.
+const FILENAME_SIZE_TOLERANCE = 0.01;
+// Sizes given for one file without an infoHash (MediaFusion) are rounded,
+// to a GB or to two digits, so they can be up to this many times apart.
+const HASHLESS_SIZE_RATIO = 1.05;
+// MediaFusion gives some sizes in GiB as GB, 1.0737 times too small.
+const GIB_IN_GB = 1024 ** 3 / 1e9;
+// A size without an infoHash this many times another's is a pack's size,
+// not the file's: MediaFusion gives an episode its season pack's.
+const PACK_SIZE_RATIO = 2;
+
+const isUsenetStream = (stream: ParsedStream): boolean =>
+  stream.type === 'usenet' || stream.type === 'stremio-usenet';
+
+const hasSize = (stream: ParsedStream): boolean =>
+  typeof stream.size === 'number' &&
+  Number.isFinite(stream.size) &&
+  stream.size > 0;
+
+/**
+ * Whether a stream is a torrent copy without an infoHash that gives a size,
+ * which can show it is not the one file of its name.
+ */
+const tellsBySize = (stream: ParsedStream): boolean =>
+  !isUsenetStream(stream) && !stream.torrent?.infoHash && hasSize(stream);
+
+/** A copy's infoHash in lower case: hex, whatever case an addon gives. */
+const hashOf = (stream: ParsedStream): string | undefined =>
+  stream.torrent?.infoHash?.toLowerCase() || undefined;
+
+/** A copy's fileIdx, unless it is unknown: undefined, null or negative. */
+function knownFileIdx(stream: ParsedStream): number | undefined {
+  const fileIdx = stream.torrent?.fileIdx;
+  return typeof fileIdx === 'number' && fileIdx >= 0 ? fileIdx : undefined;
+}
+
+/**
+ * Whether two streams are copies of one torrent's file: one infoHash, in any
+ * case, and, if both give a fileIdx, the same one. Addons round the file's
+ * size differently, by up to a few percent, so sizes are not compared.
+ */
+function sameTorrentFile(a: ParsedStream, b: ParsedStream): boolean {
+  const hash = hashOf(a);
+  if (!hash || hash !== hashOf(b)) return false;
+  const aIdx = knownFileIdx(a);
+  const bIdx = knownFileIdx(b);
+  return aIdx === undefined || bIdx === undefined || aIdx === bIdx;
+}
+
+/** Whether two sizes are within FILENAME_SIZE_TOLERANCE of each other. */
+function closeInSize(a: ParsedStream, b: ParsedStream): boolean {
+  const larger = Math.max(a.size!, b.size!);
+  return Math.abs(a.size! - b.size!) <= larger * FILENAME_SIZE_TOLERANCE;
+}
+
+/**
+ * Whether a same-named stream without an infoHash or a size may be the file
+ * of `other`, which has both: a copy of its torrent's file, or, without an
+ * infoHash, a size that is its rounded size or a pack's.
+ */
+function mayBeFileOf(stream: ParsedStream, other: ParsedStream): boolean {
+  if (sameTorrentFile(stream, other)) return true;
+  if (stream.torrent?.infoHash || !hasSize(stream)) return false;
+  const ratio = stream.size! / other.size!;
+  if (ratio >= PACK_SIZE_RATIO) return true;
+  const spread = Math.max(ratio, 1 / ratio);
+  return (
+    spread <= HASHLESS_SIZE_RATIO || Math.abs(spread / GIB_IN_GB - 1) <= 0.01
+  );
+}
+
+/**
+ * Join the streams of one filename that are copies of one file. A shared
+ * filename alone does not make two streams one file: a release re-uploaded
+ * with an added audio track can keep its name.
+ *
+ * Torrents with an infoHash and a size are one file when they are copies of
+ * one torrent's file or within FILENAME_SIZE_TOLERANCE in size. A chain of
+ * such pairs is joined as a whole, which is intended. A copy without a
+ * fileIdx of a torrent with two or more known fileIdx under this name cannot
+ * tell which of them it is, so it is compared by size only and joins the only
+ * file within the tolerance, or stays apart.
+ *
+ * Every other stream cannot tell its file by itself. If the torrents make no
+ * file, all streams of the name are joined, as before. Otherwise a stream
+ * joins the only file it may be the file of (mayBeFileOf), and stays apart if
+ * it may be several: joined to two of them, it would join them to each other.
+ * If it may be none, it stays apart too, unless the torrents make one file
+ * and its size does not rule that out (tellsBySize): then it joins it, as
+ * before. Usenet results are joined to each other as before, whatever their
+ * sizes (reposts), and placed together.
+ */
+function joinSameNamed(sameName: ParsedStream[], dsu: DSU<string>): void {
+  const torrents = sameName.filter((s) => !isUsenetStream(s));
+  const fileIdxs = new Map<string, Set<number>>();
+  for (const s of torrents) {
+    const hash = hashOf(s);
+    const idx = knownFileIdx(s);
+    if (!hash || idx === undefined) continue;
+    if (!fileIdxs.has(hash)) fileIdxs.set(hash, new Set());
+    fileIdxs.get(hash)!.add(idx);
+  }
+  const sized = torrents.filter((s) => hashOf(s) && hasSize(s));
+  const untold = new Set(
+    sized.filter(
+      (s) =>
+        knownFileIdx(s) === undefined &&
+        (fileIdxs.get(hashOf(s)!)?.size ?? 0) >= 2
+    )
+  );
+  const told = sized.filter((s) => !untold.has(s));
+  const files = new DSU<string>();
+  for (const s of sized) files.makeSet(s.id);
+  for (let i = 0; i < told.length; i++) {
+    for (let j = i + 1; j < told.length; j++) {
+      const a = told[i];
+      const b = told[j];
+      if (files.find(a.id) === files.find(b.id)) continue;
+      if (sameTorrentFile(a, b) || closeInSize(a, b)) files.union(a.id, b.id);
+    }
+  }
+  for (const s of untold) {
+    const fits = new Set(
+      told.filter((f) => closeInSize(s, f)).map((f) => files.find(f.id))
+    );
+    if (fits.size === 1) files.union(s.id, [...fits][0]);
+  }
+  const byFile = new Map<string, ParsedStream[]>();
+  for (const s of sized) {
+    const file = files.find(s.id);
+    if (!byFile.has(file)) byFile.set(file, []);
+    byFile.get(file)!.push(s);
+  }
+
+  const joinAll = (group: ParsedStream[]) => {
+    for (const s of group.slice(1)) dsu.union(group[0].id, s.id);
+  };
+  if (byFile.size === 0) {
+    joinAll(sameName);
+    return;
+  }
+
+  const sizedSet = new Set(sized);
+  const usenet = sameName.filter(isUsenetStream);
+  const others = torrents.filter((s) => !sizedSet.has(s)).map((s) => [s]);
+  if (usenet.length > 0) others.push(usenet);
+  const fileList = [...byFile.values()];
+  for (const file of fileList) joinAll(file);
+  for (const group of others) {
+    joinAll(group);
+    const fits = fileList.filter((file) =>
+      group.some((s) => file.some((f) => mayBeFileOf(s, f)))
+    );
+    if (fits.length === 1) {
+      dsu.union(group[0].id, fits[0][0].id);
+    } else if (fileList.length === 1 && !group.some(tellsBySize)) {
+      dsu.union(group[0].id, fileList[0][0].id);
+    }
+  }
+}
+
 /**
  * Build the seeders/age tiebreaker comparator from the user's config. Shared by
  * winner selection and same-release variant ordering so both honour the same
@@ -126,6 +288,7 @@ class StreamDeduplicator {
     // const streamGroups = new Map<string, ParsedStream[]>();
     const dsu = new DSU<string>();
     const keyToStreamIds = new Map<string, string[]>();
+    const filenameToStreams = new Map<string, ParsedStream[]>();
 
     const excludedStreamIds = new Set<string>();
     for (const stream of streams) {
@@ -161,7 +324,9 @@ class StreamDeduplicator {
           .replace(/[^\p{L}\p{N}+]/gu, '')
           .replace(/\s+/g, '')
           .toLowerCase();
-        currentStreamKeyStrings.push(`filename:${normalisedFilename}`);
+        const sameName = filenameToStreams.get(normalisedFilename) ?? [];
+        sameName.push(stream);
+        filenameToStreams.set(normalisedFilename, sameName);
       }
 
       const isUsenet =
@@ -246,6 +411,9 @@ class StreamDeduplicator {
           dsu.union(firstStreamId, streamIdsSharingCommonKey[i]);
         }
       }
+    }
+    for (const sameName of filenameToStreams.values()) {
+      joinSameNamed(sameName, dsu);
     }
     // Group actual stream objects by their DSU representative ID
     const idToStreamMap = new Map(streams.map((s) => [s.id, s])); // For quick lookup

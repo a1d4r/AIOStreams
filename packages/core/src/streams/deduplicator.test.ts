@@ -491,6 +491,565 @@ describe('deduplicate by file', () => {
   });
 });
 
+interface Copy {
+  hash?: string;
+  addon: string;
+  size?: number;
+  fileIdx?: number;
+  languages?: string[];
+}
+
+// A cached TorBox copy of a torrent's file, as a debrid addon returns it.
+// Without a hash, a copy as MediaFusion gives it.
+function makeCopy(filename: string, copy: Copy): ParsedStream {
+  return {
+    id: `${copy.addon}-${copy.hash}-${Math.random()}`,
+    type: 'debrid',
+    filename,
+    size: copy.size,
+    service: { id: 'torbox', cached: true },
+    torrent: copy.hash
+      ? { infoHash: copy.hash, fileIdx: copy.fileIdx }
+      : undefined,
+    parsedFile: {
+      audioChannels: [],
+      visualTags: [],
+      audioTags: [],
+      languages: copy.languages ?? [],
+      subtitles: [],
+    },
+    addon: {
+      instanceId: copy.addon,
+      resultPassthrough: false,
+      preset: { id: copy.addon },
+    },
+  } as unknown as ParsedStream;
+}
+
+// Deduplicate debrid copies the way a filename + infoHash config does,
+// merging languages into the kept copy.
+async function dedupCopies(
+  streams: ParsedStream[],
+  keys = ['filename', 'infoHash']
+) {
+  const deduplicator = new StreamDeduplicator({
+    deduplicator: {
+      enabled: true,
+      keys,
+      cached: 'per_service',
+      merge: { enabled: true, fields: ['languages', 'subtitles'] },
+    },
+    presets: [
+      { instanceId: 'comet' },
+      { instanceId: 'torrentio' },
+      { instanceId: 'mediafusion' },
+    ],
+    services: [],
+  } as unknown as UserData);
+  return deduplicator.deduplicate(streams);
+}
+
+const hashes = (streams: ParsedStream[]) =>
+  streams.map((s) => s.torrent?.infoHash ?? 'none').sort();
+
+describe('deduplicate by filename and size', () => {
+  const name = 'Show S01E01 1080p WEB-DL.mkv';
+
+  it('keeps apart other torrents of that name more than 1% apart in size', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_445_000_000 }),
+      makeCopy(name, {
+        hash: 'b',
+        addon: 'torrentio',
+        size: 1_480_000_000,
+        languages: ['Russian'],
+      }),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'b']);
+    const a = results.find((s) => s.torrent?.infoHash === 'a')!;
+    assert.deepEqual(a.parsedFile?.languages, []);
+  });
+
+  it('joins copies of one torrent with and without a fileIdx', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_479_307_976 }),
+      makeCopy(name, {
+        hash: 'a',
+        addon: 'torrentio',
+        size: 1_479_307_976,
+        fileIdx: 18,
+      }),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('joins copies of one torrent whose sizes are rounded differently', async () => {
+    // An addon that rounds to a tenth of a GiB gives exactly 1.4 GiB for a
+    // file Comet counts to the byte, 1.6% apart. By the filename key alone:
+    // torrentFileKeys joins these by the infoHash key too.
+    const results = await dedupCopies(
+      [
+        makeCopy(name, { hash: 'a', addon: 'comet', size: 1_479_307_976 }),
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'torrentio',
+          size: 1_503_238_554,
+          fileIdx: 18,
+        }),
+      ],
+      ['filename']
+    );
+    assert.equal(results.length, 1);
+  });
+
+  it('joins other torrents of that name within 1% in size', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_441_668_990 }),
+      makeCopy(name, { hash: 'b', addon: 'torrentio', size: 1_438_814_044 }),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('joins other torrents of that name when one has no size', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_445_000_000 }),
+      makeCopy(name, { hash: 'b', addon: 'torrentio' }),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('joins a copy without an infoHash that gives its season pack size', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_664_000_000 }),
+      makeCopy(name, { addon: 'mediafusion', size: 14_128_000_000 }),
+    ]);
+    assert.equal(results.length, 1);
+  });
+
+  it('keeps apart other torrents of that name over twice apart in size', async () => {
+    // Different rips of a movie under one name.
+    const movie = 'Movie (2019) 1080p.mkv';
+    const results = await dedupCopies([
+      makeCopy(movie, { hash: 'a', addon: 'comet', size: 18_300_000_000 }),
+      makeCopy(movie, { hash: 'b', addon: 'comet', size: 10_570_000_000 }),
+      makeCopy(movie, { hash: 'c', addon: 'torrentio', size: 4_180_000_000 }),
+      makeCopy(movie, { hash: 'd', addon: 'torrentio', size: 2_900_000_000 }),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'b', 'c', 'd']);
+  });
+
+  it('keeps apart files of one torrent with other fileIdx and size', async () => {
+    // The filename key alone: torrentFileKeys tells a torrent's files by
+    // name, so the infoHash key takes these two for one file.
+    const results = await dedupCopies(
+      [
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'comet',
+          size: 1_000_000_000,
+          fileIdx: 1,
+        }),
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'torrentio',
+          size: 1_300_000_000,
+          fileIdx: 2,
+        }),
+      ],
+      ['filename']
+    );
+    assert.equal(results.length, 2);
+  });
+
+  it('joins a copy without an infoHash to the one file its size fits', async () => {
+    // MediaFusion gives 1.5 GiB as 1.5 GB.
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_200_000_000 }),
+      makeCopy(name, {
+        hash: 'b',
+        addon: 'comet',
+        size: 1_610_612_736,
+        languages: ['Russian'],
+      }),
+      makeCopy(name, {
+        addon: 'mediafusion',
+        size: 1_500_000_000,
+        languages: ['Russian'],
+      }),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'b']);
+    const a = results.find((s) => s.torrent?.infoHash === 'a')!;
+    assert.deepEqual(a.parsedFile?.languages, []);
+  });
+
+  it('joins a copy without an infoHash to the only file within 5% of its size', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_400_000_000 }),
+      makeCopy(name, { hash: 'b', addon: 'comet', size: 3_500_000_000 }),
+      makeCopy(name, {
+        addon: 'mediafusion',
+        size: 1_440_000_000,
+        languages: ['Russian'],
+      }),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'b']);
+    const b = results.find((s) => s.torrent?.infoHash === 'b')!;
+    assert.deepEqual(b.parsedFile?.languages, []);
+  });
+
+  it('joins a copy without an infoHash to the only file its size is a pack of', async () => {
+    // 14 GB is ten times the episode's 1.4 GB but under twice the 8 GB rip.
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_400_000_000 }),
+      makeCopy(name, { hash: 'b', addon: 'comet', size: 8_000_000_000 }),
+      makeCopy(name, {
+        addon: 'mediafusion',
+        size: 14_000_000_000,
+        languages: ['Russian'],
+      }),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'b']);
+    const a = results.find((s) => s.torrent?.infoHash === 'a')!;
+    const b = results.find((s) => s.torrent?.infoHash === 'b')!;
+    assert.deepEqual(a.parsedFile?.languages, ['Russian']);
+    assert.deepEqual(b.parsedFile?.languages, []);
+  });
+
+  it('keeps apart a copy without an infoHash whose size does not fit the one file', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_445_000_000 }),
+      makeCopy(name, {
+        addon: 'mediafusion',
+        size: 1_600_000_000,
+        languages: ['Russian'],
+      }),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'none']);
+    const a = results.find((s) => s.torrent?.infoHash === 'a')!;
+    assert.deepEqual(a.parsedFile?.languages, []);
+  });
+
+  it('joins a copy without an infoHash or a size to the one file', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_445_000_000 }),
+      makeCopy(name, { addon: 'mediafusion' }),
+    ]);
+    assert.deepEqual(hashes(results), ['a']);
+  });
+
+  it('joins copies of one torrent whose infoHash differs in case', async () => {
+    // By the filename key alone: torrentFileKeys lowers the infoHash too.
+    const results = await dedupCopies(
+      [
+        makeCopy(name, { hash: 'ABCD', addon: 'comet', size: 1_400_000_000 }),
+        makeCopy(name, {
+          hash: 'abcd',
+          addon: 'torrentio',
+          size: 1_430_000_000,
+        }),
+      ],
+      ['filename']
+    );
+    assert.equal(results.length, 1);
+  });
+
+  // These two by the filename key alone: torrentFileKeys tells a torrent's
+  // files by name, so the infoHash key takes all three copies for one file.
+  it('joins a copy without a fileIdx to the only file of its torrent its size fits', async () => {
+    const results = await dedupCopies(
+      [
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'comet',
+          size: 1_000_000_000,
+          fileIdx: 1,
+        }),
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'torrentio',
+          size: 1_300_000_000,
+          fileIdx: 2,
+          languages: ['Russian'],
+        }),
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'mediafusion',
+          size: 1_000_000_000,
+        }),
+      ],
+      ['filename']
+    );
+    assert.equal(results.length, 2);
+    const small = results.find((s) => s.size === 1_000_000_000)!;
+    assert.deepEqual(small.parsedFile?.languages, []);
+  });
+
+  it('keeps apart a copy without a fileIdx whose size fits no file or two', async () => {
+    const files = (second: number) => [
+      makeCopy(name, {
+        hash: 'a',
+        addon: 'comet',
+        size: 1_000_000_000,
+        fileIdx: 1,
+      }),
+      makeCopy(name, {
+        hash: 'a',
+        addon: 'torrentio',
+        size: second,
+        fileIdx: 2,
+        languages: ['Russian'],
+      }),
+    ];
+    const none = await dedupCopies(
+      [
+        ...files(1_300_000_000),
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'mediafusion',
+          size: 1_150_000_000,
+        }),
+      ],
+      ['filename']
+    );
+    assert.equal(none.length, 3);
+    const two = await dedupCopies(
+      [
+        ...files(1_016_000_000),
+        makeCopy(name, {
+          hash: 'a',
+          addon: 'mediafusion',
+          size: 1_008_000_000,
+        }),
+      ],
+      ['filename']
+    );
+    assert.equal(two.length, 3);
+  });
+
+  it('keeps apart a copy without an infoHash whose size fits two files', async () => {
+    const results = await dedupCopies([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_445_000_000 }),
+      makeCopy(name, {
+        hash: 'b',
+        addon: 'comet',
+        size: 1_480_000_000,
+        languages: ['Russian'],
+      }),
+      makeCopy(name, {
+        addon: 'mediafusion',
+        size: 1_460_000_000,
+        languages: ['Russian'],
+      }),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'b', 'none']);
+    const a = results.find((s) => s.torrent?.infoHash === 'a')!;
+    assert.deepEqual(a.parsedFile?.languages, []);
+  });
+
+  it('keeps Re:Zero S4E1 releases with a Russian track apart from the originals', async () => {
+    // Rutracker adds a Russian track and keeps the name; Knaben has the
+    // original. Real sizes from Comet and Torrentio.
+    const erai =
+      '[Erai-raws] Re Zero kara Hajimeru Isekai Seikatsu 4th Season - 01 [1080p CR WEB-DL AVC AAC].mkv';
+    const budLight = '[BudLightSubs] ReZero S4 - 01 [1080p].mkv';
+    const eraiRu = '066cc12b13d99c498b192ae75cbf07c904257283';
+    const eraiKnaben = '8c10fcd75c79b8c439f1a86174df36e9b399338f';
+    const budLightExt = 'e312720c1964df695b37e794aef0a66ebac933b9';
+    const budLightRu = '996558ea6955801b23a56dcc6546c44bdd5a459c';
+    const budLightKnaben = 'f38f7f1954960538aab3e5b62279da1d6624e966';
+    const results = await dedupCopies([
+      makeCopy(erai, { hash: eraiKnaben, addon: 'comet', size: 1445422834 }),
+      makeCopy(erai, { hash: eraiRu, addon: 'comet', size: 1479307976 }),
+      makeCopy(erai, {
+        hash: eraiRu,
+        addon: 'torrentio',
+        size: 1481763717,
+        fileIdx: 18,
+        languages: ['Russian', 'Japanese', 'English'],
+      }),
+      makeCopy(budLight, {
+        hash: budLightKnaben,
+        addon: 'comet',
+        size: 1441668990,
+      }),
+      makeCopy(budLight, {
+        hash: budLightRu,
+        addon: 'comet',
+        size: 1441668990,
+      }),
+      makeCopy(budLight, {
+        hash: budLightRu,
+        addon: 'torrentio',
+        size: 1438814044,
+        fileIdx: 0,
+        languages: ['Russian', 'Japanese'],
+      }),
+      makeCopy(budLight, {
+        hash: budLightExt,
+        addon: 'comet',
+        size: 1511201900,
+      }),
+      makeCopy(budLight, {
+        hash: budLightExt,
+        addon: 'torrentio',
+        size: 1513975972,
+        fileIdx: 12,
+        languages: ['Russian'],
+      }),
+    ]);
+    const languages = (hash: string) =>
+      results.find((s) => s.torrent?.infoHash === hash)?.parsedFile?.languages;
+    assert.equal(results.length, 4);
+    assert.deepEqual(languages(eraiKnaben), []);
+    assert.deepEqual(languages(eraiRu), ['Russian', 'Japanese', 'English']);
+    assert.deepEqual(languages(budLightExt), ['Russian']);
+    // The Knaben copies of the BudLightSubs file are the same file as the
+    // Rutracker one (same size from Comet), so they stay joined.
+    assert.equal(
+      results.filter(
+        (s) =>
+          s.torrent?.infoHash === budLightRu ||
+          s.torrent?.infoHash === budLightKnaben
+      ).length,
+      1
+    );
+  });
+
+  describe('Re:Zero S4E1 Erai-raws with a copy that cannot tell its file', () => {
+    const erai =
+      '[Erai-raws] Re Zero kara Hajimeru Isekai Seikatsu 4th Season - 01 [1080p CR WEB-DL AVC AAC].mkv';
+    const eraiRu = '066cc12b13d99c498b192ae75cbf07c904257283';
+    const eraiKnaben = '8c10fcd75c79b8c439f1a86174df36e9b399338f';
+    const erais = () => [
+      makeCopy(erai, { hash: eraiKnaben, addon: 'comet', size: 1445422834 }),
+      makeCopy(erai, { hash: eraiRu, addon: 'comet', size: 1479307976 }),
+      makeCopy(erai, {
+        hash: eraiRu,
+        addon: 'torrentio',
+        size: 1481763717,
+        fileIdx: 18,
+        languages: ['Russian', 'Japanese', 'English'],
+      }),
+    ];
+    const languages = (results: ParsedStream[], hash: string) =>
+      results.find((s) => s.torrent?.infoHash === hash)?.parsedFile?.languages;
+
+    it('keeps the two files apart beside a copy without a size', async () => {
+      const results = await dedupCopies([
+        ...erais(),
+        makeCopy(erai, { hash: 'c', addon: 'mediafusion' }),
+      ]);
+      assert.deepEqual(languages(results, eraiKnaben), []);
+      assert.deepEqual(languages(results, eraiRu), [
+        'Russian',
+        'Japanese',
+        'English',
+      ]);
+    });
+
+    it('keeps the two files apart beside a copy with a season pack size', async () => {
+      const results = await dedupCopies([
+        ...erais(),
+        makeCopy(erai, { addon: 'mediafusion', size: 14_128_000_000 }),
+      ]);
+      assert.deepEqual(languages(results, eraiKnaben), []);
+      assert.deepEqual(languages(results, eraiRu), [
+        'Russian',
+        'Japanese',
+        'English',
+      ]);
+    });
+
+    it('joins a copy without a size to its torrent', async () => {
+      const results = await dedupCopies(
+        [
+          ...erais(),
+          makeCopy(erai, { hash: eraiRu, addon: 'mediafusion', fileIdx: 18 }),
+        ],
+        ['filename']
+      );
+      assert.deepEqual(hashes(results), [eraiRu, eraiKnaben].sort());
+    });
+  });
+});
+
+describe('deduplicate Usenet results by filename', () => {
+  // A cached TorBox Usenet result with a playback URL, so a dropped one can
+  // be a failover variant.
+  const makeNzb = (filename: string, n: number, size: number) =>
+    ({
+      id: `nzb-${n}`,
+      type: 'usenet',
+      filename,
+      size,
+      nzbUrl: `https://indexer.example/nzb/${n}`,
+      url: `https://aio.example/api/v1/debrid/playback/${n}`,
+      service: { id: 'torbox', cached: true },
+      parsedFile: {
+        audioChannels: [],
+        visualTags: [],
+        audioTags: [],
+        languages: [],
+        subtitles: [],
+      },
+      addon: {
+        instanceId: 'newznab',
+        resultPassthrough: false,
+        preset: { id: 'newznab' },
+      },
+    }) as unknown as ParsedStream;
+
+  it('joins reposts of different sizes as failover variants', async () => {
+    const deduplicator = new StreamDeduplicator({
+      deduplicator: {
+        enabled: true,
+        keys: ['filename', 'infoHash'],
+        cached: 'per_service',
+        merge: { enabled: true, failoverVariants: true },
+      },
+      presets: [{ instanceId: 'newznab' }],
+      services: [],
+    } as unknown as UserData);
+    const results = await deduplicator.deduplicate([
+      makeNzb('Movie.2020.1080p.mkv', 1, 10_000_000_000),
+      makeNzb('Movie.2020.1080p.mkv-xpost', 2, 10_300_000_000),
+    ]);
+    assert.equal(results.length, 1);
+    assert.equal(results[0].failoverVariants?.length, 1);
+  });
+
+  const dedupMixed = (streams: ParsedStream[]) =>
+    new StreamDeduplicator({
+      deduplicator: {
+        enabled: true,
+        keys: ['filename', 'infoHash'],
+        cached: 'per_service',
+      },
+      presets: [{ instanceId: 'comet' }, { instanceId: 'newznab' }],
+      services: [],
+    } as unknown as UserData).deduplicate(streams);
+
+  it('places Usenet results beside two torrent files together', async () => {
+    const name = 'Movie.2020.1080p.mkv';
+    const results = await dedupMixed([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_000_000_000 }),
+      makeCopy(name, { hash: 'b', addon: 'comet', size: 1_500_000_000 }),
+      makeNzb(name, 1, 1_000_000_000),
+      makeNzb(name, 2, 1_500_000_000),
+    ]);
+    assert.deepEqual(hashes(results), ['a', 'b', 'none']);
+  });
+
+  it('joins Usenet results to the one torrent file whatever their sizes', async () => {
+    const name = 'Movie.2020.1080p.mkv';
+    const results = await dedupMixed([
+      makeCopy(name, { hash: 'a', addon: 'comet', size: 1_000_000_000 }),
+      makeNzb(name, 1, 1_600_000_000),
+    ]);
+    assert.equal(results.length, 1);
+  });
+});
+
 describe('mergeLanguagesAndSubtitles', () => {
   it('takes only the probe, discarding the indexer entirely', () => {
     const winner = makeStream(undefined, [], []);
