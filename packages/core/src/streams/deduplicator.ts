@@ -11,7 +11,11 @@ import {
   hasTrackLists,
 } from '../utils/index.js';
 import StreamUtils, { shouldPassthroughStage } from './utils.js';
-import { isRoundSize, torrentFileKeys } from './torrent-copies.js';
+import {
+  isRoundSize,
+  joinSameNamed,
+  torrentFileKeys,
+} from './torrent-copies.js';
 import { shouldProxyStream } from './proxifier.js';
 import { isExternalDebridFailover } from '../main/play-chain.js';
 import { PLAYBACK_PATH_PREFIX } from '../debrid/utils.js';
@@ -74,7 +78,10 @@ class StreamDeduplicator {
     this.userData = userData;
   }
 
-  public async deduplicate(streams: ParsedStream[]): Promise<ParsedStream[]> {
+  public async deduplicate(
+    streams: ParsedStream[],
+    regrouped = false
+  ): Promise<ParsedStream[]> {
     let deduplicator = this.userData.deduplicator;
     if (!deduplicator || !deduplicator.enabled) {
       return streams;
@@ -126,6 +133,7 @@ class StreamDeduplicator {
     // const streamGroups = new Map<string, ParsedStream[]>();
     const dsu = new DSU<string>();
     const keyToStreamIds = new Map<string, string[]>();
+    const filenameToStreams = new Map<string, ParsedStream[]>();
 
     const excludedStreamIds = new Set<string>();
     for (const stream of streams) {
@@ -161,7 +169,9 @@ class StreamDeduplicator {
           .replace(/[^\p{L}\p{N}+]/gu, '')
           .replace(/\s+/g, '')
           .toLowerCase();
-        currentStreamKeyStrings.push(`filename:${normalisedFilename}`);
+        const sameName = filenameToStreams.get(normalisedFilename) ?? [];
+        sameName.push(stream);
+        filenameToStreams.set(normalisedFilename, sameName);
       }
 
       const isUsenet =
@@ -247,6 +257,9 @@ class StreamDeduplicator {
         }
       }
     }
+    for (const sameName of filenameToStreams.values()) {
+      joinSameNamed(sameName, dsu);
+    }
     // Group actual stream objects by their DSU representative ID
     const idToStreamMap = new Map(streams.map((s) => [s.id, s])); // For quick lookup
     const finalDuplicateGroupsMap = new Map<string, ParsedStream[]>(); // Maps representative ID to stream objects
@@ -262,7 +275,9 @@ class StreamDeduplicator {
     // Soft matching: a result that passed the checks of the title has
     // unconfirmed copies, which the checks would have removed. Remove them
     // and group the rest again, so the confirmed results are deduplicated
-    // as without soft matching: a removed copy may have joined them.
+    // as without soft matching: a removed copy may have joined them. Same-
+    // named streams can join only once a copy is gone, so the second grouping
+    // can still have such copies: remove them without grouping again.
     const unconfirmedCopies = new Set(
       Array.from(finalDuplicateGroupsMap.values()).flatMap((group) =>
         group.some((stream) => !stream.unconfirmed)
@@ -275,9 +290,20 @@ class StreamDeduplicator {
         { removed: unconfirmedCopies.size },
         'removed unconfirmed copies of confirmed results'
       );
-      return this.deduplicate(
-        streams.filter((stream) => !unconfirmedCopies.has(stream))
-      );
+      if (!regrouped) {
+        return this.deduplicate(
+          streams.filter((stream) => !unconfirmedCopies.has(stream)),
+          true
+        );
+      }
+      for (const [id, group] of finalDuplicateGroupsMap) {
+        finalDuplicateGroupsMap.set(
+          id,
+          group.filter((stream) => !unconfirmedCopies.has(stream))
+        );
+      }
+      for (const stream of unconfirmedCopies)
+        excludedStreamIds.delete(stream.id);
     }
 
     const processedStreams = new Set<ParsedStream>();
