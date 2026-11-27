@@ -93,6 +93,8 @@ export class StremThruStreamParser extends StreamParser {
     const audioLangs = getLanguagesAfterMarker(stream.description, '🎙️');
     if (audioLangs && audioLangs.length > 0) {
       overrides.languages = audioLangs;
+      // A copy: filters push inferred languages into `languages`.
+      overrides.probedAudioLanguages = [...audioLangs];
       overrides.mediaInfoQuality = 'probe';
     }
 

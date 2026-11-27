@@ -14,6 +14,7 @@ import StreamUtils, { shouldPassthroughStage } from './utils.js';
 import {
   isRoundSize,
   joinSameNamed,
+  sameTorrentFile,
   torrentFileKeys,
 } from './torrent-copies.js';
 import { shouldProxyStream } from './proxifier.js';
@@ -787,7 +788,10 @@ class StreamDeduplicator {
    * sources at the best mediaInfoQuality tier present, discarding lower
    * tiers. If nobody has a tier, merges everything as a best effort. A probe
    * describes the whole file, so at that tier languages and tracks are copied
-   * from one probed source instead of unioned, the first with track lists.
+   * from one probed source instead of unioned: the first with track lists, or
+   * else the first with `probedAudioLanguages`, which go with its languages.
+   * Those are taken only from a copy of the winner's torrent file: a group
+   * can hold another torrent of the same name and about the same size.
    */
   private mergeLanguagesAndSubtitles(
     winner: ParsedStream,
@@ -801,15 +805,23 @@ class StreamDeduplicator {
       : sources;
 
     if (winner.parsedFile) {
+      const audioProbed = pool.find(
+        (s) =>
+          s.parsedFile?.probedAudioLanguages &&
+          (s === winner || sameTorrentFile(s, winner))
+      )?.parsedFile;
       const probed =
         bestTier === 'probe'
-          ? (pool.find((s) => hasTrackLists(s.parsedFile)) ?? pool[0])
-              .parsedFile
+          ? (pool.find((s) => hasTrackLists(s.parsedFile))?.parsedFile ??
+            audioProbed ??
+            pool[0].parsedFile)
           : undefined;
       if (fields.includes('languages')) {
         if (probed) {
           winner.parsedFile.languages = probed.languages ?? [];
           winner.parsedFile.audioTracks = probed.audioTracks;
+          winner.parsedFile.probedAudioLanguages =
+            probed === audioProbed ? probed.probedAudioLanguages : undefined;
         } else {
           winner.parsedFile.languages = arrayMerge(
             [],

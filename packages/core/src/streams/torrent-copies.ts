@@ -656,7 +656,7 @@ const hashOf = (stream: ParsedStream): string | undefined =>
  * case, and, if both give a fileIdx, the same one. Addons round the file's
  * size differently, by up to a few percent, so sizes are not compared.
  */
-function sameTorrentFile(a: ParsedStream, b: ParsedStream): boolean {
+export function sameTorrentFile(a: ParsedStream, b: ParsedStream): boolean {
   const hash = hashOf(a);
   if (!hash || hash !== hashOf(b)) return false;
   const aIdx = knownFileIdx(a);

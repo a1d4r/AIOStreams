@@ -1233,6 +1233,59 @@ describe('mergeLanguagesAndSubtitles', () => {
     assert.equal(winner.parsedFile?.mediaInfoQuality, 'probe');
   });
 
+  const ofTorrent = (
+    stream: ParsedStream,
+    infoHash: string,
+    fileIdx?: number
+  ) => Object.assign(stream, { torrent: { infoHash, fileIdx } });
+  const audioProbed = (languages: string[]) => {
+    const stream = makeStream('probe', languages, []);
+    stream.parsedFile!.probedAudioLanguages = [...languages];
+    return stream;
+  };
+
+  it("takes the probed audio languages of a copy of the winner's file", () => {
+    const winner = ofTorrent(makeStream(undefined, ['English'], []), 'a');
+    const bitrateOnly = ofTorrent(makeStream('probe', ['German'], []), 'a');
+    const probed = ofTorrent(audioProbed(['Russian', 'English']), 'A', 1);
+    merge(winner, [bitrateOnly, probed]);
+    assert.deepEqual(winner.parsedFile?.languages, ['Russian', 'English']);
+    assert.deepEqual(winner.parsedFile?.probedAudioLanguages, [
+      'Russian',
+      'English',
+    ]);
+  });
+
+  it('leaves the probed audio languages of another torrent or file', () => {
+    for (const [hash, fileIdx] of [
+      ['b', 0],
+      ['a', 9],
+    ] as const) {
+      const winner = ofTorrent(makeStream('probe', ['English'], []), 'a', 0);
+      merge(winner, [ofTorrent(audioProbed(['Russian']), hash, fileIdx)]);
+      assert.deepEqual(winner.parsedFile?.languages, ['English']);
+      assert.equal(winner.parsedFile?.probedAudioLanguages, undefined);
+    }
+    // As before: the only probed copy gives its languages, now unconfirmed.
+    const untiered = ofTorrent(makeStream(undefined, [], []), 'a');
+    merge(untiered, [ofTorrent(audioProbed(['Russian']), 'b')]);
+    assert.deepEqual(untiered.parsedFile?.languages, ['Russian']);
+    assert.equal(untiered.parsedFile?.probedAudioLanguages, undefined);
+  });
+
+  it('keeps its own probed audio languages, but not beside a track list', () => {
+    const own = audioProbed(['Russian']);
+    merge(own, [makeStream(undefined, ['English'], [])]);
+    assert.deepEqual(own.parsedFile?.probedAudioLanguages, ['Russian']);
+
+    const record = makeStream('probe', ['Russian'], []);
+    record.parsedFile!.audioTracks = [{ lang: 'Russian' }];
+    const winner = audioProbed(['English']);
+    merge(winner, [record]);
+    assert.deepEqual(winner.parsedFile?.languages, ['Russian']);
+    assert.equal(winner.parsedFile?.probedAudioLanguages, undefined);
+  });
+
   it('takes only the indexer, discarding the addon entirely', () => {
     const winner = makeStream(undefined, [], []);
     const indexerOther = makeStream('indexer', ['English'], ['English']);

@@ -1450,6 +1450,13 @@ export const ParsedFileSchema = z.object({
   audioTags: z.array(z.string()),
   mediaInfoQuality: z.enum(MEDIA_INFO_QUALITY_TIERS).optional(),
   languages: z.array(z.string()),
+  /**
+   * Audio languages an addon read from the file itself (StremThru's 🎙️), named
+   * as in `languages`. Absent, never empty, when none are known this way: a
+   * `probe` tier alone does not say where `languages` came from. Not kept
+   * beside `audioTracks`, which say more.
+   */
+  probedAudioLanguages: z.array(z.string()).optional(),
   subtitles: z.array(z.string()).optional(),
   audioTracks: z.array(MediaTrackSchema).optional(),
   subtitleTracks: z.array(MediaTrackSchema).optional(),

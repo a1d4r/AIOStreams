@@ -21,6 +21,10 @@ export function layerMediaInfo(
     ...parsedFile,
     ...merged,
     languages: merged.languages ?? parsedFile?.languages ?? [],
+    // The info's audio replaces the languages an addon read from the file.
+    probedAudioLanguages: info?.languages
+      ? undefined
+      : parsedFile?.probedAudioLanguages,
     subtitles: merged.subtitles ?? parsedFile?.subtitles ?? [],
     audioChannels: merged.audioChannels ?? parsedFile?.audioChannels ?? [],
     visualTags: mergeVisualTags(parsedFile?.visualTags, info?.visualTags),
