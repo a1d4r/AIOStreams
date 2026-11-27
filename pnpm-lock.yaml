@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@aiostreams/release-parser': file:vendor/aiostreams-release-parser-1.0.1-2eca4f9.tgz
+  '@aiostreams/release-parser': file:vendor/aiostreams-release-parser-1.0.1-fd2a6b8.tgz
 
 patchedDependencies:
   '@radix-ui/react-select@2.4.1': d5877dfee3b4986948b7211090292e1dd527de7c82a67db13ee2e5d39700d1e7
@@ -47,8 +47,8 @@ importers:
         specifier: ^0.3.1
         version: 0.3.1
       '@aiostreams/release-parser':
-        specifier: file:../../vendor/aiostreams-release-parser-1.0.1-2eca4f9.tgz
-        version: file:vendor/aiostreams-release-parser-1.0.1-2eca4f9.tgz
+        specifier: file:../../vendor/aiostreams-release-parser-1.0.1-fd2a6b8.tgz
+        version: file:vendor/aiostreams-release-parser-1.0.1-fd2a6b8.tgz
       '@torbox/torbox-api':
         specifier: github:viren070/torbox-sdk-js#dist
         version: https://codeload.github.com/viren070/torbox-sdk-js/tar.gz/82fb4eb14ccd3a0372fb445f796fa49527960cdd
@@ -736,8 +736,8 @@ packages:
   '@aiostreams/jassub@0.1.0':
     resolution: {integrity: sha512-Lmcom4pKcFlfMjL2a824AXyNte9xRNvWtXiLV/jasQNqgU3Ubc3NM8r+bGdu6R7OJPJWCGS+7bi4ZchSLwz5UA==}
 
-  '@aiostreams/release-parser@file:vendor/aiostreams-release-parser-1.0.1-2eca4f9.tgz':
-    resolution: {integrity: sha512-0sl1xBY3s5UKhx7AQJsNdBcWpYG/Y6tq3wDnh9iA5snYn7VStwFJ56vVKJCdbHXsHoVgp+hKMq5eNGFeZU7CCA==, tarball: file:vendor/aiostreams-release-parser-1.0.1-2eca4f9.tgz}
+  '@aiostreams/release-parser@file:vendor/aiostreams-release-parser-1.0.1-fd2a6b8.tgz':
+    resolution: {integrity: sha512-fktBonE0tfJurQaBGtaZMMJz6FpJZQpoa2zhlZj1z5VTvLR0TiHA7w/MaHNjLzJOs1y6y4aMRuBGr5F0GQFSjA==, tarball: file:vendor/aiostreams-release-parser-1.0.1-fd2a6b8.tgz}
     version: 1.0.1
 
   '@aiostreams/seanime-extensions@0.10.3':
@@ -8181,7 +8181,7 @@ snapshots:
       rvfc-polyfill: 1.0.8
       throughput: 1.0.2
 
-  '@aiostreams/release-parser@file:vendor/aiostreams-release-parser-1.0.1-2eca4f9.tgz': {}
+  '@aiostreams/release-parser@file:vendor/aiostreams-release-parser-1.0.1-fd2a6b8.tgz': {}
 
   '@aiostreams/seanime-extensions@0.10.3': {}
 

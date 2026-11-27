@@ -6,7 +6,7 @@ import { parseTorrentTitle } from '@aiostreams/release-parser';
 // Canary for the pnpm override in pnpm-workspace.yaml that swaps the npm
 // release of @aiostreams/release-parser for vendor/*.tgz, packed from the
 // fork's main (upstream 1.0.1 plus open PRs). Every title below parses wrong
-// on the npm 1.0.1 release, so a failure here means the override stopped
+// or stalls on the npm 1.0.1 release, so a failure here means the override stopped
 // applying, not that the parser regressed.
 //
 // When upstream bumps the dependency past the vendored version, repack the
@@ -47,5 +47,12 @@ describe('vendored release-parser', () => {
     );
     assert.equal(parsed.seasons, undefined);
     assert.equal(parsed.episodes, undefined);
+  });
+
+  it('does not stall on a long Cyrillic name without a separator', () => {
+    // About 30 s on the npm release, where the alt title pattern is cubic.
+    const started = Date.now();
+    parseTorrentTitle('Фильм ' + 'а'.repeat(3000));
+    assert.ok(Date.now() - started < 3000);
   });
 });
