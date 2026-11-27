@@ -5,7 +5,7 @@ import { parseTorrentTitle } from '@aiostreams/release-parser';
 
 // Canary for the pnpm override in pnpm-workspace.yaml that swaps the npm
 // release of @aiostreams/release-parser for vendor/*.tgz, packed from the
-// fork's main (upstream 1.0.1 plus open PRs). Both titles below parse wrong
+// fork's main (upstream 1.0.1 plus open PRs). Every title below parses wrong
 // on the npm 1.0.1 release, so a failure here means the override stopped
 // applying, not that the parser regressed.
 //
