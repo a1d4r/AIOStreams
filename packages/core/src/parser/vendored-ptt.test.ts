@@ -40,4 +40,12 @@ describe('vendored release-parser', () => {
       Array.from({ length: 24 }, (_, i) => i + 1)
     );
   });
+
+  it('does not read an aspect ratio as a season and an episode', () => {
+    const parsed = parseTorrentTitle(
+      'Сумерки. Сага. Рассвет: Часть 2 / The Twilight Saga: Breaking Dawn - Part 2 (2012) [BDRip 1080p, 16x9]'
+    );
+    assert.equal(parsed.seasons, undefined);
+    assert.equal(parsed.episodes, undefined);
+  });
 });
