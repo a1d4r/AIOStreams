@@ -7,6 +7,14 @@ const MAX_ENTRIES = 10_000;
 
 const cache = new Map<string, ParsedResult>();
 
+// Names arrive from other addons unchecked, and patterns that backtrack are
+// quadratic in the length, here and in the parser: 100 KB of one name held the
+// event loop for seconds. Whatever reads a name with such a pattern reads this
+// much of it. Release names with every tag an indexer appends stay under 600.
+// The limit only tames the quadratic patterns (about 10 ms a name at worst); a
+// cubic one needs fixing itself, so raising the limit buys nothing.
+export const MAX_NAME_LENGTH = 1024;
+
 let repostSuffixPattern = compileRepostSuffixes(DEFAULT_REPOST_SUFFIXES);
 
 /** The SPA also loads this module, so the server pushes its config in here. */
@@ -47,11 +55,13 @@ export function stripRepostSuffixes(name: string): string {
  * torrent and then the wrapper re-parses the names it kept, via a different
  * entry point into the same handlers. Release names also recur across requests.
  *
+ * Only the first {@link MAX_NAME_LENGTH} characters of the name are parsed.
+ *
  * Returned objects are SHARED between callers and must be treated as read-only,
  * including their arrays (`seasons`, `episodes`, `volumes`, `editions`).
  */
 export function parseTorrentTitleCached(title: string): ParsedResult {
-  const name = stripRepostSuffixes(title);
+  const name = stripRepostSuffixes(title.slice(0, MAX_NAME_LENGTH));
   const cached = cache.get(name);
   if (cached !== undefined) {
     // Re-insert to refresh recency; Map iterates in insertion order.

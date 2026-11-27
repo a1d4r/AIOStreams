@@ -47,6 +47,13 @@ describe('isPublishedBeforeRelease', () => {
 });
 
 describe('hasLatinName', () => {
+  it('reads only the start of an overlong name', () => {
+    // Quadratic without a bracket: 50 s on the whole name.
+    const started = Date.now();
+    assert.ok(!hasLatinName('а'.repeat(100_000)));
+    assert.ok(Date.now() - started < 3000);
+  });
+
   it('finds the Latin name a Russian tracker gives a foreign release', () => {
     for (const title of [
       'Красота / The Beauty / Сезон: 1 / Серии: 1-11 из 11 (Райан Мерфи / Ryan Murphy) [2026, США, Ужасы, WEB-DLRip] MVO',
@@ -177,6 +184,16 @@ describe('firstReleaseDate', () => {
 
 describe('hasTranslationOfRussianOriginal', () => {
   const zapadnya = { titles: ['Западня', 'Trap'], originalLanguage: 'ru' };
+
+  it('reads only the start of an overlong name', () => {
+    // Quadratic in the spaces after "Original": 16 s on the whole name.
+    const started = Date.now();
+    hasTranslationOfRussianOriginal(
+      'Фильм Original' + ' '.repeat(100_000),
+      zapadnya
+    );
+    assert.ok(Date.now() - started < 3000);
+  });
 
   it('drops a dubbed release of a foreign namesake', () => {
     for (const title of [

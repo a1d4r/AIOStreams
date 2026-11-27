@@ -1,4 +1,5 @@
 import type { TitleMetadata } from './base.js';
+import { MAX_NAME_LENGTH } from '../parser/title.js';
 
 /**
  * Tells a namesake of the same year from the title in a text search result,
@@ -98,7 +99,7 @@ function splitNames(head: string): string[] {
 
 /** The release carries a name in Latin script besides the Russian one. */
 export function hasLatinName(rawTitle: string): boolean {
-  const head = rawTitle.split(' | ')[0];
+  const head = rawTitle.slice(0, MAX_NAME_LENGTH).split(' | ')[0];
   // a scene name: no Russian at all ("The.Beauty.2026.S01E01.1080p.WEB")
   if (
     !/\p{Script=Cyrillic}/u.test(head) &&
@@ -160,7 +161,7 @@ export function hasTranslationOfRussianOriginal(
   metadata: TitleMetadata
 ): boolean {
   if (metadata.originalLanguage !== 'ru' || !rawTitle) return false;
-  const name = rawTitle.split(' | [')[0];
+  const name = rawTitle.slice(0, MAX_NAME_LENGTH).split(' | [')[0];
   if (RUSSIAN_ORIGINAL.test(name)) return false;
   return TRANSLATION.test(name.replace(SUBTITLES, ''));
 }

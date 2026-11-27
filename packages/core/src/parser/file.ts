@@ -1,6 +1,6 @@
 import { PARSE_REGEX } from './regex.js';
 import { ParsedFile } from '../db/schemas.js';
-import { parseTorrentTitleCached } from './title.js';
+import { MAX_NAME_LENGTH, parseTorrentTitleCached } from './title.js';
 import { RESOLUTIONS } from '../utils/constants.js';
 import { mapLanguageCode, convertLangCodeToName } from '../utils/languages.js';
 
@@ -91,6 +91,7 @@ function titleRegex(parsedTitle: string): RegExp {
 
 class FileParser {
   static parse(filename: string): ParsedFile {
+    filename = filename.slice(0, MAX_NAME_LENGTH);
     const parsed = parseTorrentTitleCached(filename);
     const parsedTitle = parsed.title;
     // prevent the title from being parsed for info

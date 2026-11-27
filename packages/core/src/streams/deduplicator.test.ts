@@ -68,6 +68,18 @@ describe('deduplicate', () => {
     assert.equal(results.length, 1);
   });
 
+  it('reads only the start of an overlong filename', async () => {
+    // The repost suffix pattern is quadratic: 5 s on the whole name.
+    const long = 'Movie' + '-rp'.repeat(33_000) + 'x';
+    const started = Date.now();
+    const results = await dedup([
+      makeStream(undefined, [], [], long),
+      makeStream(undefined, [], [], long + 'y'),
+    ]);
+    assert.ok(Date.now() - started < 3000);
+    assert.equal(results.length, 1);
+  });
+
   it('repost suffix gets stripped correctly', async () => {
     const stream1 = makeStream(undefined, [], [], 'Name-xpost');
     const stream2 = makeStream(undefined, [], [], 'Name');
