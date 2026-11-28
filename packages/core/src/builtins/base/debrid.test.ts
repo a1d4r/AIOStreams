@@ -13,7 +13,7 @@ import type {
   NZBWithSelectedFile,
 } from '../../debrid/utils.js';
 import type { ParsedId } from '../../utils/id-parser.js';
-import { deduplicateTitles } from '../../metadata/utils.js';
+import { deduplicateTitles, type MetadataTitle } from '../../metadata/utils.js';
 import { settingsStore } from '../../config/index.js';
 import { SettingsRepository } from '../../db/repositories/settings.js';
 
@@ -295,6 +295,114 @@ describe('BaseDebridAddon title language queries', () => {
       // a Latin-script language is unaffected
       assert.deepEqual(brat2Queries('en'), ['brother 2 2000']);
       await setLatinOnly(true);
+    });
+  });
+
+  describe("TMDB's translation next to an alternative title", () => {
+    // TMDB lists alternative titles ahead of translations.
+    const movie = (titles: MetadataTitle[], spec: string) =>
+      queryBuilder.buildQueries(
+        { mediaType: 'movie' } as ParsedId,
+        {
+          ...metadata,
+          titles: titles.map((t) => t.title),
+          titlesWithLang: titles,
+          originalLanguage: 'ko',
+          year: 2022,
+        },
+        { titleLanguages: [spec] }
+      );
+    const woo = deduplicateTitles(
+      [
+        { title: '이상한 변호사 우영우', language: 'ko' },
+        { title: 'Адвокат Ву', language: 'ru' },
+        { title: 'Weird Lawyer Woo', language: 'ko' },
+        {
+          title: 'Необычный адвокат У Ён У',
+          language: 'ru',
+          translatedInto: ['ru'],
+        },
+        { title: '우영우', language: 'ko', translatedInto: ['ko'] },
+      ],
+      'ko'
+    );
+
+    it('is the title a language is searched by', async () => {
+      await setLatinOnly(false);
+      assert.deepEqual(movie(woo, 'ru'), ['необычный адвокат у ён у 2022']);
+      await setLatinOnly(true);
+    });
+
+    it('is taken when another language translates the title the same', async () => {
+      await setLatinOnly(false);
+      const diaries = deduplicateTitles([
+        { title: 'Записки аптекаря', language: 'ru' },
+        { title: 'Монолог фармацевта', language: 'ru', translatedInto: ['ru'] },
+        { title: 'Монолог фармацевта', language: 'uk', translatedInto: ['uk'] },
+      ]);
+      assert.deepEqual(movie(diaries, 'ru'), ['монолог фармацевта 2022']);
+      await setLatinOnly(true);
+    });
+
+    it('gives way to a native-script title when it is a romanisation', async () => {
+      await setLatinOnly(false);
+      const blinders = deduplicateTitles([
+        { title: 'Острые козырьки', language: 'ru' },
+        { title: 'Peaky Blinders', language: 'ru', translatedInto: ['ru'] },
+      ]);
+      assert.deepEqual(movie(blinders, 'ru'), ['острые козырьки 2022']);
+      await setLatinOnly(true);
+    });
+
+    it('does not replace the original title', async () => {
+      await setLatinOnly(false);
+      assert.deepEqual(
+        movie(woo, 'original').map((q) => q.normalize('NFC')),
+        ['이상한 변호사 우영우 2022'.normalize('NFC')]
+      );
+      await setLatinOnly(true);
+    });
+
+    it('does not replace the title of content in that language', async () => {
+      await setLatinOnly(false);
+      const renamed = deduplicateTitles(
+        [
+          { title: 'Слово пацана', language: 'ru' },
+          {
+            title: 'Слово пацана. Кровь на асфальте',
+            language: 'ru',
+            translatedInto: ['ru'],
+          },
+        ],
+        'ru'
+      );
+      assert.deepEqual(
+        queryBuilder.buildQueries(
+          { mediaType: 'movie' } as ParsedId,
+          {
+            ...metadata,
+            titles: renamed.map((t) => t.title),
+            titlesWithLang: renamed,
+            originalLanguage: 'ru',
+          },
+          { titleLanguages: ['ru'] }
+        ),
+        ['слово пацана 2019']
+      );
+      await setLatinOnly(true);
+    });
+
+    it('is not preferred while queries are Latin-only', async () => {
+      await setLatinOnly(true);
+      const romanised = deduplicateTitles([
+        { title: 'Advokat Vu', language: 'ru' },
+        {
+          title: 'Необычный адвокат У Ён У',
+          language: 'ru',
+          translatedInto: ['ru'],
+        },
+      ]);
+      assert.deepEqual(movie(romanised, 'ru'), ['advokat vu 2022']);
     });
   });
 

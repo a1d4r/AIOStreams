@@ -3,6 +3,12 @@ export interface MetadataTitle {
   language?: string; // ISO 639-1 language code, normalised from provider-specific formats
   /** Every language that names a title this way, where `language` keeps only an unambiguous one. */
   languages?: string[];
+  /**
+   * Languages TMDB translates the title into this way: the localised title,
+   * where an alternative title filed under a country is often a fan or working
+   * name.
+   */
+  translatedInto?: string[];
   trusted?: boolean;
 }
 
@@ -21,6 +27,7 @@ export function deduplicateTitles(
   // single-language tags alone.
   const titleAllLangs = new Map<string, Set<string>>();
   const titleAllTrustedLangs = new Map<string, Set<string>>();
+  const titleTranslatedInto = new Map<string, Set<string>>();
   const titleKeys: string[] = [];
   const titleFirstOccurrence = new Map<string, MetadataTitle>();
 
@@ -31,6 +38,7 @@ export function deduplicateTitles(
       titleTrustedLangs.set(key, new Set());
       titleAllLangs.set(key, new Set());
       titleAllTrustedLangs.set(key, new Set());
+      titleTranslatedInto.set(key, new Set());
       titleKeys.push(key);
       titleFirstOccurrence.set(key, t);
     }
@@ -45,6 +53,9 @@ export function deduplicateTitles(
     for (const lang of t.languages ?? (t.language ? [t.language] : [])) {
       titleAllLangs.get(key)!.add(lang);
       if (t.trusted) titleAllTrustedLangs.get(key)!.add(lang);
+    }
+    for (const lang of t.translatedInto ?? []) {
+      titleTranslatedInto.get(key)!.add(lang);
     }
   }
 
@@ -73,10 +84,12 @@ export function deduplicateTitles(
     const languages = [
       ...(allTrustedLangs.size ? allTrustedLangs : titleAllLangs.get(key)!),
     ];
+    const translatedInto = [...titleTranslatedInto.get(key)!];
     return {
       title: first.title,
       language,
       languages: languages.length ? languages : undefined,
+      ...(translatedInto.length ? { translatedInto } : {}),
     };
   });
 }

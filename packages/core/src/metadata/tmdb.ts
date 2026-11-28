@@ -458,6 +458,9 @@ export class TMDBMetadata {
         return {
           title,
           language: translation.iso_639_1 || undefined,
+          translatedInto: translation.iso_639_1
+            ? [translation.iso_639_1]
+            : undefined,
         } as MetadataTitle;
       })
       .filter((t): t is MetadataTitle => t !== null);

@@ -109,6 +109,21 @@ function findTitleInLanguage(
   );
 }
 
+/**
+ * TMDB's translation into the language, in native script. It is the title's
+ * localised name; TMDB's alternative titles come first in the list and are
+ * often a fan or working name ("Адвокат Ву" for "Необычный адвокат У Ён У").
+ */
+function findNativeTranslation(
+  titles: MetadataTitle[] | undefined,
+  language: string
+): MetadataTitle | undefined {
+  return titles?.find(
+    (t) =>
+      t.translatedInto?.includes(language) && !isPredominantlyLatin(t.title)
+  );
+}
+
 export const BaseDebridConfigSchema = z.object({
   services: BuiltinDebridServices,
   tmdbApiKey: z.string().optional(),
@@ -594,12 +609,13 @@ export abstract class BaseDebridAddon<T extends BaseDebridConfig> {
             ?.slice(0, appConfig.builtins.scrape.titleLimit)
             .forEach((title) => selected.add(cleanTitle(title)));
         } else {
-          // take only the first matching title.
-          const match = findTitleInLanguage(
-            metadata.titlesWithLang,
-            spec,
-            preferNonLatin
-          );
+          // take only one title: the translation, else the first matching.
+          // Not for the original language: there the original title leads.
+          const match =
+            (preferNonLatin && spec !== metadata.originalLanguage
+              ? findNativeTranslation(metadata.titlesWithLang, spec)
+              : undefined) ??
+            findTitleInLanguage(metadata.titlesWithLang, spec, preferNonLatin);
           if (match) {
             selected.add(cleanTitle(match.title, spec));
             noteSpecTitle(match, spec);

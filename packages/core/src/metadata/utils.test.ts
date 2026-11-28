@@ -57,4 +57,24 @@ describe('deduplicateTitles', () => {
       [{ title: 'Престиж', language: undefined, languages: ['ru', 'bg'] }]
     );
   });
+  it('keeps the languages a title is the translation of', () => {
+    const tmdb = deduplicateTitles([
+      { title: 'Монолог фармацевта', language: 'ru' },
+      { title: 'Записки аптекаря', language: 'ru' },
+      { title: 'Монолог фармацевта', language: 'ru', translatedInto: ['ru'] },
+      { title: 'Монолог фармацевта', language: 'uk', translatedInto: ['uk'] },
+    ]).map((t) => ({ ...t, trusted: true }));
+    assert.deepEqual(
+      deduplicateTitles([{ title: 'Монолог фармацевта' }, ...tmdb]),
+      [
+        {
+          title: 'Монолог фармацевта',
+          language: undefined,
+          languages: ['ru', 'uk'],
+          translatedInto: ['ru', 'uk'],
+        },
+        { title: 'Записки аптекаря', language: 'ru', languages: ['ru'] },
+      ]
+    );
+  });
 });
